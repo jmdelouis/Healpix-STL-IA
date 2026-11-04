@@ -26,7 +26,7 @@ endings (LF).
 
 Code:
 
-- **This repository**, `jmdelouis/Healpix-STL-IA`. It is private at the time of writing: ask the authors for access, or use the archived copy cited in the paper.
+- **This repository**, [`jmdelouis/Healpix-STL-IA`](https://github.com/jmdelouis/Healpix-STL-IA) (public).
 - **[STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI)** (public), at commit `20329e1d2aeb6b822e194f671367e9eed8eb8193`.
   - It provides the scattering statistics: the Rust engine `stl-bridge` and its Python wrapper `stl_port.native`.
   - The full-sky runs of Sect. 4 used its parent commit `66975a4dead97b8828721b6fbb67b2147a3fed48`. The full-sky statistics are identical in both commits.
@@ -49,7 +49,7 @@ $R/runs           one directory per run, figures in runs/figs*
 ```bash
 export R=/path/to/workdir
 mkdir -p $R/runs
-git clone git@github.com:jmdelouis/Healpix-STL-IA.git $R/src
+git clone https://github.com/jmdelouis/Healpix-STL-IA $R/src
 git clone https://github.com/jmdelouis/STL-Dev-MPI $R/stl/src
 git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
 ```
