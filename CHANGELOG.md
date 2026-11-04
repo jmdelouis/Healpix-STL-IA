@@ -4,6 +4,9 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 
 ## Unreleased
 
+### Fixed
+- **Checkpoints.** `stlia-train-denoise` writes `model.pt` to a temporary file and renames it. A failed write, such as a full file system, now leaves the previous checkpoint intact instead of a truncated file. No documentation change: the outputs are the same.
+
 ### Added
 - **Masked statistics.** `--stat-masks` averages every scattering coefficient of the terms under galactic masks, each with its ergodic weight. It uses the masked averages of the STL-Dev-MPI engine (commit 9038114, `NativeEngine(masks=...)`), and `DenoiseLoss` gains the `masks` and `npix` arguments.
   - The runs `r256_fz_cl857_mk` and `l256_fz_mk` are added.

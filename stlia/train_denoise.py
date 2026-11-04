@@ -518,8 +518,10 @@ def main(argv=None):
         if step % a.eval_every == 0 or step == a.steps:
             evals[step] = evaluate(save=step == a.steps)
             show(step, evals[step])
-            torch.save({"state": net.state_dict(), **net.config(), "j": j, "noise_rms": rms},
-                       os.path.join(a.out, "model.pt"))
+            # write then rename: a failed write leaves the previous checkpoint intact
+            path = os.path.join(a.out, "model.pt")
+            torch.save({"state": net.state_dict(), **net.config(), "j": j, "noise_rms": rms}, path + ".tmp")
+            os.replace(path + ".tmp", path)
     with open(os.path.join(a.out, "train.json"), "w") as f:
         json.dump({"args": vars(a), "j": j, "coefficients": len(one.plan), "parameters": nparams, "noise_rms": rms,
                    "loss_weights": weights, "seconds": time.time() - started, "loss_history": hist,
