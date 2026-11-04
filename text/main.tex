@@ -244,7 +244,17 @@ In the mock tests of Sects.~3 and \ref{sec:n256} the ``clean'' sky is the PR3 ma
 
 \paragraph{Spectra.} Over $|b|>30^\circ$ (Fig.~\ref{fig:real_spectra}), the EE and BB spectra of $u$ equal the noise-free cross spectrum $d_1\times d_2$ to within 1\% for $30\le\ell<60$ and to within 6\% (EE) and 1\% (BB) for $100\le\ell<200$, where $d$ is 36\% (EE) and 53\% (BB) above it. At smaller scales $u$ falls below the cross spectrum: for $200\le\ell<300$ it reaches 64\% (EE) and 85\% (BB) of it, and 54\% and 90\% for $300\le\ell<450$, while $d$ is 2 to 7 times above. Correspondingly, the spectrum of $d-u$ is within 20\% of the noise spectrum for $100\le\ell<300$ and 35--40\% above it for $300\le\ell<450$: at the scales where the noise dominates, the network removes part of the dust with the noise. At $\ell<60$, where the dust dominates by two orders of magnitude, $d-u$ is 30--40\% below the noise.
 
-The per-map L-BFGS minimisation of the same loss (Sect.~\ref{sec:lbfgs}), and the runs with frozen noise biases, the spectrum loss and the 857\,GHz conditioning (Sect.~\ref{sec:variants}), are in progress; they will tell how much of the remaining differences comes from the amortisation and how much from the loss.
+\begin{figure*}
+  \centering
+  \figfile{lbfgs_bicep.pdf}{\textwidth}
+  \figfile{lbfgs_spectra.pdf}{0.9\textwidth}
+  \caption{Same as Figs.~\ref{fig:real_bicep} and \ref{fig:real_spectra} for the per-map reference: the same loss minimised over the pixels of $u$ by L-BFGS, without a network (Sect.~\ref{sec:lbfgs}; 10 rounds of 50 iterations, noise biases not frozen).}
+  \label{fig:lbfgs}
+\end{figure*}
+
+\paragraph{Per-map reference.} Minimised directly over the pixels of $u$ by L-BFGS (Sect.~\ref{sec:lbfgs}; 10 rounds of 50 iterations, 6\,min per round on an A100), the same loss reaches a similar final value as the network, and a similar level of removed noise: the rms of $d-u$ is 0.98 ($Q$) and 0.73 ($U$) times that of the noise. The maps of the BICEP2 field look much the same (Fig.~\ref{fig:lbfgs}). The spectra differ in two ways. At large scales, $10\lesssim\ell\lesssim100$, the L-BFGS solution changes the map well above the noise: the spectrum of $d-u$ is 3 to 10 times that of the noise, and for $30\le\ell<60$ the EE spectrum of $u$ is 8\% below the cross spectrum and BB 9\% above, where the network is within 1\%. The statistics of the loss do not fix the configuration of the large scales, which the per-pixel optimiser is free to change, while the network, which predicts a correction of $d$ from its local features, leaves them in place. At small scales the two behave alike: for $200\le\ell<300$, $u$ reaches 54\% (EE) and 85\% (BB) of the cross spectrum with L-BFGS, against 64\% and 85\% with the network. The amortised network is therefore not worse than the per-map minimisation of the same loss, and better at large scales; the deficit of power at small scales comes from the loss, not from the amortisation.
+
+The runs with frozen noise biases, the spectrum loss and the 857\,GHz conditioning (Sect.~\ref{sec:variants}) are in progress, for the network and for the per-map reference; they address this deficit.
 
 \section{Discussion and next steps}
 
