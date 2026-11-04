@@ -66,6 +66,9 @@ def main():
     p.add_argument("--flip", action="store_true", help="random sign of the training sky")
     p.add_argument("--levels", type=int, default=4)
     p.add_argument("--channels", default=None, help="comma-separated, one per level")
+    p.add_argument("--conv", default="sphere", choices=["sphere", "faces"])
+    p.add_argument("--gauge", default="phi", choices=["phi", "cosmo"])
+    p.add_argument("--ksz", type=int, default=3)
     p.add_argument("--steps", type=int, default=2000)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--device", type=int, default=0)
@@ -102,7 +105,7 @@ def main():
         return torch.as_tensor(as_real(v[0]), device=dev), torch.as_tensor(var[0], device=dev)
 
     channels = [int(c) for c in a.channels.split(",")] if a.channels else None
-    net = UNet(a.nside, a.levels, channels).to(dev)
+    net = UNet(a.nside, a.levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
     nparams = sum(q.numel() for q in net.parameters())
