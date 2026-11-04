@@ -1,0 +1,214 @@
+@preamble{ "\providecommand{\aap}{A\&A}\providecommand{\apj}{ApJ}\providecommand{\apjl}{ApJL}\providecommand{\mnras}{MNRAS}\providecommand{\prd}{Phys.~Rev.~D}\providecommand{\pasp}{PASP}\providecommand{\apjs}{ApJS}" }
+
+% refs.bib -- bibliography for the STL-Dev-MPI paper (A&A, natbib author-year).
+% Every entry was checked on 2026-10-27 against the publisher DOI record
+% (Crossref / doi.org), arXiv, NASA ADS-style journal references, or the
+% software's own repository / package registry. Fields that could not be
+% confirmed were left out.
+
+% ======================================================================
+% HEALPix / tools
+% ======================================================================
+
+@article{gorski2005,
+  author        = {G{\'o}rski, K. M. and Hivon, E. and Banday, A. J. and Wandelt, B. D. and Hansen, F. K. and Reinecke, M. and Bartelmann, M.},
+  title         = {{HEALPix}: a framework for high-resolution discretization and fast analysis of data distributed on the sphere},
+  journal       = {\apj},
+  year          = {2005},
+  volume        = {622},
+  number        = {2},
+  pages         = {759--771},
+  doi           = {10.1086/427976},
+  eprint        = {astro-ph/0409513},
+  archivePrefix = {arXiv}
+}
+
+@article{zonca2019,
+  author        = {Zonca, Andrea and Singer, Leo P. and Lenz, Daniel and Reinecke, Martin and Rosset, Cyrille and Hivon, Eric and Gorski, Krzysztof M.},
+  title         = {healpy: equal area pixelization and spherical harmonics transforms for data on the sphere in {Python}},
+  journal       = {Journal of Open Source Software},
+  year          = {2019},
+  volume        = {4},
+  number        = {35},
+  pages         = {1298},
+  doi           = {10.21105/joss.01298}
+}
+
+@inproceedings{paszke2019,
+  author        = {Paszke, Adam and Gross, Sam and Massa, Francisco and Lerer, Adam and Bradbury, James and others},
+  title         = {{PyTorch}: an imperative style, high-performance deep learning library},
+  booktitle     = {Advances in Neural Information Processing Systems},
+  editor        = {Wallach, H. and Larochelle, H. and Beygelzimer, A. and d'Alch{\'e}-Buc, F. and Fox, E. and Garnett, R.},
+  volume        = {32},
+  publisher     = {Curran Associates, Inc.},
+  year          = {2019},
+  url           = {https://proceedings.neurips.cc/paper_files/paper/2019/file/bdbca288fee7f92f2bfa9f7012727740-Paper.pdf},
+  eprint        = {1912.01703},
+  archivePrefix = {arXiv}
+}
+
+@misc{stldev,
+  author        = {{STL-Proj}},
+  title         = {{STL-Dev}: {Scattering Transform Library} (development repository)},
+  howpublished  = {\url{https://github.com/STL-Proj/STL-Dev}},
+  year          = {2025},
+  note          = {Public GitHub repository of the STL-Proj organisation, created in December 2025; documentation at \url{https://stl-dev.readthedocs.io}; accessed 2026 October 27}
+}
+
+@misc{foscat,
+  author        = {Delouis, Jean-Marc},
+  title         = {{FOSCAT}: generate synthetic {Healpix} or {2D} data using {Cross Scattering Transform}},
+  howpublished  = {\url{https://github.com/jmdelouis/FOSCAT}},
+  year          = {2022},
+  note          = {Python package \texttt{foscat} on PyPI (\url{https://pypi.org/project/foscat/}), first released in 2022 (version 0.1); latest release 2026.6.1}
+}
+
+@book{nocedal2006,
+  author        = {Nocedal, Jorge and Wright, Stephen J.},
+  title         = {Numerical Optimization},
+  edition       = {2nd},
+  series        = {Springer Series in Operations Research and Financial Engineering},
+  publisher     = {Springer},
+  address       = {New York},
+  year          = {2006},
+  isbn          = {978-0-387-30303-1},
+  doi           = {10.1007/978-0-387-40065-5}
+}
+
+@article{mallat2012,
+  author        = {Mallat, St{\'e}phane},
+  title         = {Group invariant scattering},
+  journal       = {Communications on Pure and Applied Mathematics},
+  year          = {2012},
+  volume        = {65},
+  number        = {10},
+  pages         = {1331--1398},
+  doi           = {10.1002/cpa.21413},
+  eprint        = {1101.2286},
+  archivePrefix = {arXiv}
+}
+
+@article{bruna2013,
+  author        = {Bruna, Joan and Mallat, St{\'e}phane},
+  title         = {Invariant scattering convolution networks},
+  journal       = {IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  year          = {2013},
+  volume        = {35},
+  number        = {8},
+  pages         = {1872--1886},
+  doi           = {10.1109/TPAMI.2012.230},
+  eprint        = {1203.1513},
+  archivePrefix = {arXiv}
+}
+
+% Note: volume 1 (no. 3/4) of Math. Stat. Learn. is dated 2018 by the
+% publisher (EMS Press); the article itself appeared online on 2019 May 19.
+@article{allys2019,
+  author        = {Allys, E. and Levrier, F. and Zhang, S. and Colling, C. and Regaldo-Saint Blancard, B. and Boulanger, F. and Hennebelle, P. and Mallat, S.},
+  title         = {The {RWST}, a comprehensive statistical description of the non-{Gaussian} structures in the {ISM}},
+  journal       = {\aap},
+  year          = {2019},
+  volume        = {629},
+  pages         = {A115},
+  doi           = {10.1051/0004-6361/201834975},
+  eprint        = {1905.01372},
+  archivePrefix = {arXiv}
+}
+
+@article{allys2020,
+  author        = {Allys, E. and Marchand, T. and Cardoso, J.-F. and Villaescusa-Navarro, F. and Ho, S. and Mallat, S.},
+  title         = {New interpretable statistics for large-scale structure analysis and generation},
+  journal       = {\prd},
+  year          = {2020},
+  volume        = {102},
+  number        = {10},
+  pages         = {103506},
+  doi           = {10.1103/PhysRevD.102.103506},
+  eprint        = {2006.06298},
+  archivePrefix = {arXiv}
+}
+
+@article{cheng2020,
+  author        = {Cheng, Sihao and Ting, Yuan-Sen and M{\'e}nard, Brice and Bruna, Joan},
+  title         = {A new approach to observational cosmology using the scattering transform},
+  journal       = {\mnras},
+  year          = {2020},
+  volume        = {499},
+  number        = {4},
+  pages         = {5902--5914},
+  doi           = {10.1093/mnras/staa3165},
+  eprint        = {2006.08561},
+  archivePrefix = {arXiv}
+}
+
+@article{morel2023,
+  author        = {Morel, Rudy and Mallat, St{\'e}phane and Bouchaud, Jean-Philippe},
+  title         = {Path shadowing {Monte Carlo}},
+  journal       = {Quantitative Finance},
+  year          = {2024},
+  volume        = {24},
+  number        = {9},
+  pages         = {1199--1225},
+  doi           = {10.1080/14697688.2024.2399285},
+  eprint        = {2308.01486},
+  archivePrefix = {arXiv}
+}
+
+@article{cheng2024,
+  author        = {Cheng, Sihao and Morel, Rudy and Allys, Erwan and M{\'e}nard, Brice and Mallat, St{\'e}phane},
+  title         = {Scattering spectra models for physics},
+  journal       = {PNAS Nexus},
+  year          = {2024},
+  volume        = {3},
+  number        = {4},
+  pages         = {pgae103},
+  doi           = {10.1093/pnasnexus/pgae103},
+  eprint        = {2306.17210},
+  archivePrefix = {arXiv}
+}
+
+@article{delouis2022,
+  author        = {Delouis, J.-M. and Allys, E. and Gauvrit, E. and Boulanger, F.},
+  title         = {Non-{Gaussian} modelling and statistical denoising of {Planck} dust polarisation full-sky maps using scattering transforms},
+  journal       = {\aap},
+  year          = {2022},
+  volume        = {668},
+  pages         = {A122},
+  doi           = {10.1051/0004-6361/202244566},
+  eprint        = {2207.12527},
+  archivePrefix = {arXiv}
+}
+
+@article{campeti2025,
+  author        = {Campeti, P. and Delouis, J.-M. and Pagano, L. and Allys, E. and Lattanzi, M. and Gerbino, M.},
+  title         = {From few to many maps: A fast map-level emulator for extreme augmentation of {CMB} systematics datasets},
+  journal       = {\aap},
+  year          = {2025},
+  volume        = {700},
+  pages         = {A136},
+  doi           = {10.1051/0004-6361/202554540},
+  eprint        = {2503.11643},
+  archivePrefix = {arXiv}
+}
+
+
+@inproceedings{ronneberger2015,
+  author        = {Ronneberger, O. and Fischer, P. and Brox, T.},
+  title         = {{U-Net}: Convolutional Networks for Biomedical Image Segmentation},
+  booktitle     = {Medical Image Computing and Computer-Assisted Intervention -- MICCAI 2015},
+  series        = {LNCS},
+  volume        = {9351},
+  pages         = {234--241},
+  year          = {2015},
+  eprint        = {1505.04597},
+}
+
+@article{planck2020hfi,
+  author        = {{Planck Collaboration}},
+  title         = {{Planck} 2018 results. {III}. {High Frequency Instrument} data processing and frequency maps},
+  journal       = {\aap},
+  year          = {2020},
+  volume        = {641},
+  pages         = {A3},
+  doi           = {10.1051/0004-6361/201832909},
+}

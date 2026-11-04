@@ -1,14 +1,159 @@
-\documentclass{article}
-\usepackage{graphicx} % Required for inserting images
+% Healpix-STL-IA: amortised scattering denoising on the sphere (A&A draft).
+%
+% Built with the A&A class (aa.cls, aa.bst, from the A&A macro package of
+% aanda.org, kept in this directory).  Figures and the results table are
+% produced by scripts/make_figures.py of the GitHub repository
+% jmdelouis/Healpix-STL-IA from the train_denoise.py runs.
+\documentclass{aa}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{txfonts}
 
-\title{healpix-STLIA}
-\author{jean.marc.delouis }
-\date{November 2026}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\nside}{N_{\rm side}}
+\newcommand{\figfile}[2]{\IfFileExists{figures/#1}{\includegraphics[width=#2]{#1}}{\fbox{\parbox{#2}{\centering\small missing figure \texttt{\detokenize{#1}}}}}}
+\graphicspath{{figures/}}
 
 \begin{document}
+
+\title{Amortised statistical denoising of full-sky maps with a HEALPix U-Net trained on scattering covariances}
+\subtitle{A first test on \textit{Planck} 353\,GHz polarisation}
+\titlerunning{Amortised scattering denoising on the sphere}
+
+\author{J.-M. Delouis\inst{1}\corrauth{jean.marc.delouis@ifremer.fr}
+  \and \todo{co-authors}}
+\authorrunning{J.-M. Delouis et al.}
+\institute{Laboratoire d'Oc\'eanographie Physique et Spatiale (LOPS), Univ. Brest, CNRS, Ifremer, IRD, Brest, France}
+\date{Received ...; accepted ...}
+
+\abstract
+{Scattering-transform statistics can separate a non-Gaussian sky component from noise without any clean training data: in \citet{delouis2022} the denoised \textit{Planck} dust map is the solution of an optimisation, run pixel by pixel with L-BFGS, that makes the statistics of the denoised map plus noise match those of the observed map.}
+{We replace this per-map optimisation by a network: a U-Net on the HEALPix sphere maps an observed map $d$ to a denoised map $u$ in one evaluation, and is trained with the same statistical constraint, so that no clean sky is ever used.}
+{The network works on the twelve HEALPix base faces with face-aware padding, so that its pooling is the NESTED pyramid. The loss compares the scattering covariances of $u+n_i$, for noise realisations $n_i$, with those of $d$, with the ergodic weights of the STL-Dev-MPI library, whose Rust engine gives the statistics and their exact gradient. We train on the \textit{Planck} PR3 353\,GHz $Q$ map at $\nside=64$, with white noise either uniform or with the per-pixel level of the PR3 noise simulations, and test on the $U$ map, never seen during training.}
+{On the training sky the denoised map recovers the scattering covariances of the clean sky to about one ergodic standard deviation, against up to fifty for the noisy map, and the pixel error falls to 0.4 times the noise. On the test sky the network still improves every family of statistics and reduces the pixel error to about 0.55 times the noise, but it remains far from the per-map optimum, which points to the single training sky as the main limitation.}
+{An amortised scattering denoiser is a direct, cheap replacement for the per-map optimisation; its generalisation now requires training on many skies and noise levels.}
+
+\keywords{Methods: data analysis -- Methods: statistical -- ISM: dust, extinction -- Techniques: image processing}
 
 \maketitle
 
 \section{Introduction}
+
+Statistics built from the wavelet scattering transform \citep{mallat2012,bruna2013} describe non-Gaussian fields with a small set of interpretable coefficients and are now used to model and generate astrophysical fields \citep{allys2019,allys2020,cheng2020,cheng2024}. \citet{delouis2022} used them to denoise the \textit{Planck} dust polarisation maps: the denoised map $u$ is the one for which the statistics of $u$ plus a noise realisation reproduce those of the observed map $d$, which requires no model of the clean sky beyond its statistics. The price is an optimisation over all the pixels of $u$, with L-BFGS \citep{nocedal2006}, for every new map and every new noise model.
+
+Here we \emph{amortise} this optimisation: a network $f_\theta$ maps $d$ to $u=f_\theta(d)$, and its weights $\theta$, not the pixels of $u$, are trained with the same loss. Once trained, denoising a map costs one evaluation of the network. We use a U-Net \citep{ronneberger2015} laid on the HEALPix sphere \citep{gorski2005}, in line with the spherical, orientation-aware networks we developed for global ocean fields, and the scattering covariances of the STL-Dev-MPI library \citep{stldev}, whose Rust implementation provides the statistics and their exact gradient on the GPU.
+
+This note documents a first test of the approach, on the \textit{Planck} 353\,GHz polarisation maps degraded to $\nside=64$ with white noise, and states what has to change before it can be applied to the data.
+
+\section{Method}
+
+\subsection{Statistical denoising}
+
+The observation is $d=s+n$, with $s$ the sky and $n$ the noise, whose statistical model can be sampled. Let $\Phi$ denote the scattering covariances of a map: the mean and variance, the first-order moduli $S_1$, the power-like $S_2$, and the cross-scale and cross-orientation terms $S_3$ and $S_4$ \citep{cheng2024}, here 2522 complex coefficients at $\nside=64$ with $J=5$ scales and 4 orientations. Following \citet{delouis2022}, a good estimate $u$ of $s$ is such that $u+n_i$ is statistically indistinguishable from $d$ for noise realisations $n_i$. We use the reduced $\chi^2$
+\begin{equation}
+  \mathcal{L}(u;d)=\frac{1}{N_c}\sum_c \frac{\bigl|\langle\Phi_c(u+n_i)\rangle_i-\Phi_c(d)\bigr|^2}{\sigma_c^2},
+  \qquad \sigma_c^2=\frac{V_c(d)}{N_{{\rm pix},c}},
+  \label{eq:loss}
+\end{equation}
+where the mean runs over $B=4$ realisations, $N_c$ is the number of coefficients, and $\sigma_c$ is the ergodic standard deviation of coefficient $c$: the spatial variance $V_c(d)$ of the terms that coefficient $c$ averages, over the $N_{{\rm pix},c}$ pixels of the pyramid level where it is computed. These are the weights of the ensemble synthesis of STL-Dev-MPI. \citet{delouis2022} minimised $\mathcal{L}$, with further terms, over the pixels of $u$.
+
+\subsection{Amortisation with a spherical U-Net}
+
+We set $u=f_\theta(d)$ and minimise the expectation of Eq.~\eqref{eq:loss} over observations $d$ with respect to $\theta$. No pixel of $s$ enters the loss: the training data are noisy maps only.
+
+The HEALPix NESTED map is laid out as twelve $\nside\times\nside$ base-face images, in which the mean of the four children of a pixel is the $2\times2$ average pooling. The encoder therefore descends the HEALPix pyramid by pooling, and the decoder comes back up by copying every parent into its children. Every $3\times3$ convolution pads its input with a ring of pixels from the neighbouring faces (the adjacency tables of the HEALPix library), so there are no seams. The network has four levels ($\nside=64$ to 8) with 32, 64, 96 and 128 channels, two convolutions with group normalisation and leaky ReLU per level, and skip connections ($9\times10^5$ parameters). It predicts a correction, $u=d-\sigma_d\,r_\theta(d/\sigma_d)$ with $\sigma_d$ the standard deviation of $d$; the last layer of $r_\theta$ starts at zero, so that the untrained network is the identity.
+
+The statistics come from the Rust engine of STL-Dev-MPI through a PyTorch \citep{paszke2019} autograd function: the forward pass returns $\Phi(u+n_i)$ in double precision, and the backward pass returns the exact gradient with respect to the maps from the pyramidal reverse sweep of the library. The network runs in single precision and the statistics in double precision.
+
+\subsection{Data and protocol}
+
+The sky is the \textit{Planck} PR3 353\,GHz full-mission polarisation map \citep[PSB detectors;][]{planck2020hfi}, in $\mu{\rm K}_{\rm CMB}$, degraded to $\nside=64$ by NESTED parent means. Its $Q$ and $U$ maps have standard deviations of 247 and 126\,$\mu$K. We consider two noise models, both white:
+\begin{itemize}
+  \item \emph{uniform}: $\sigma=0.5\,{\rm std}(Q)=123.5\,\mu$K in every pixel;
+  \item \emph{PR3}: $\sigma(p)$ is the per-pixel standard deviation of ten FFP10 noise simulations of the same map \citep{planck2020hfi}, degraded to $\nside=64$ \emph{before} taking the standard deviation, so that the large-scale correlations of the PR3 noise set the level of a degraded pixel; its rms is 9.0 ($Q$) and 9.6\,$\mu$K ($U$). We also use $4\,\sigma(p)$.
+\end{itemize}
+Every training step draws an observation $d=\pm Q+n_0$ of the training sky (the random sign only in the run labelled ``$\pm$ sky''), evaluates $u=f_\theta(d)$, draws $B=4$ realisations $n_i$ and takes one Adam step on Eq.~\eqref{eq:loss}, with a cosine learning-rate schedule from $10^{-3}$ over 3000 steps (0.18\,s per step on one NVIDIA T4). The network is amortised over noise realisations only: it sees a single sky. Its evaluation uses fixed noise realisations of $Q$ (training sky) and of $U$ (test sky, never seen) and compares $u$ with the clean sky, which training never sees: pixel rms error relative to the noise rms, rms over every family of $(\Phi_c(u)-\Phi_c(s))/\sigma_c(s)$, and the variance of the four-children details at every pyramid level.
+
+\section{Results}
+
+\begin{table*}
+  \caption{Final evaluation (3000 steps). Data loss: Eq.~\eqref{eq:loss} for $u$, in brackets for $u=d$ (no denoising). $S_n$: rms of $(\Phi(u)-\Phi(s))/\sigma$ over the family, in brackets the same for $d$.}
+  \label{tab:results}
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{llccccccc}
+    \hline\hline
+    Noise & Sky & noise rms [$\mu$K] & pixel error / noise & data loss & $S_1$ & $S_2$ & $S_3$ & $S_4$ \\
+    \hline
+    \csname @@input\endcsname figures/results_table.tex % primitive input: expandable inside the tabular
+    \hline
+  \end{tabular}
+\end{table*}
+
+\begin{figure*}
+  \centering
+  \figfile{maps_uniform.pdf}{\textwidth}
+  \caption{Uniform white noise ($\sigma=123.5\,\mu$K). Top: training sky $Q$; bottom: test sky $U$. From left to right: clean sky, observation, network output, noise $d-s$ and error $u-s$ (the last two on the same scale).}
+  \label{fig:maps_uniform}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{maps_pr3x4.pdf}{\textwidth}
+  \caption{Same as Fig.~\ref{fig:maps_uniform} for white noise with four times the per-pixel level of the PR3 simulations.}
+  \label{fig:maps_pr3}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{stats.pdf}{\textwidth}
+  \caption{Distance of the statistics to those of the clean sky, per family: rms of $(\Phi_c-\Phi_c(s))/\sigma_c(s)$ for $u$ (bars, one per run) and for the observation $d$ (black ticks, centred on the bar with the same noise model; the two uniform runs share theirs). Left: training sky $Q$; right: test sky $U$.}
+  \label{fig:stats}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{levels.pdf}{\textwidth}
+  \caption{Variance of the four-children details of every pyramid level relative to the clean sky, for $u$ (solid) and $d$ (dotted); the abscissa is the $\nside$ of the children.}
+  \label{fig:levels}
+\end{figure*}
+
+\begin{figure}
+  \centering
+  \figfile{loss.pdf}{\columnwidth}
+  \caption{Training loss, Eq.~\eqref{eq:loss}, relative to its initial value (identity network).}
+  \label{fig:loss}
+\end{figure}
+
+Table~\ref{tab:results} and Figs.~\ref{fig:maps_uniform}--\ref{fig:loss} summarise the four runs.
+
+\paragraph{Training sky.} With uniform noise the loss decreases by more than two orders of magnitude (Fig.~\ref{fig:loss}), and the statistics of $u$ reach those of the clean sky to within about one ergodic standard deviation for every family, while those of $d$ are off by 8.6 ($\Phi$ variance), 54 ($S_1$) and 10 ($S_2$) standard deviations (Fig.~\ref{fig:stats}, left). This agreement is obtained without any clean pixel in the loss. The pixel error falls to 0.40 times the noise, and the detail variance of $u$ matches that of the sky at every level, where $d$ has three times too much at $\nside=64$ (Fig.~\ref{fig:levels}). The random sign of the sky changes none of these figures.
+
+\paragraph{Test sky.} On $U$, which the network never saw, every family is still closer to the sky with $u$ than with $d$ except $S_3$, which is unchanged with the fixed sign of the sky: $S_1$ goes from 83 to 28 standard deviations, $S_2$ from 15 to 2.7, the variance from 18 to 3.3, and the pixel error falls to 0.55 times the noise. The data loss, however, stays at 1.0--1.2, against 0.04 on $Q$, and the smallest scales keep 1.6 times the variance of the sky (Fig.~\ref{fig:levels}, right): the network has learned a denoiser for $Q$ rather than for any dust map. Two causes add up. The network is amortised over noise realisations of a single sky. And the uniform noise, set to half the standard deviation of $Q$, is about one standard deviation of $U$: the test is at a signal-to-noise ratio the network never saw.
+
+\paragraph{PR3 noise level.} At $\nside=64$ the PR3 noise (rms 9\,$\mu$K) is small against the dust (247\,$\mu$K for $Q$): the statistics of $d$ are already within 1.5 standard deviations of the sky, and there is little to denoise. The network still reduces the $S_1$ distance from 0.84 to 0.04 on $Q$ and from 1.5 to 0.9 on $U$, and leaves the other families at or below their level for $d$; the pixel error stays at 0.95--0.99 of the noise, as expected when the noise dominates the error only in the faint regions. With four times the PR3 level, the noise matters at high latitudes (Fig.~\ref{fig:maps_pr3}): on $Q$, $S_1$ goes from 8.8 to 0.21 and the pixel error falls to 0.74; on $U$, $S_1$ goes from 15 to 6.4 and the pixel error to 0.84. The non-uniform level is handled without change to the method: $\sigma(p)$ only enters the draws of $n_0$ and $n_i$.
+
+\paragraph{Artefacts.} The error maps $u-s$ (Figs.~\ref{fig:maps_uniform} and \ref{fig:maps_pr3}) show thin lines along the edges of the twelve base faces. The padding moves scalar features across the edges without re-orienting them, and the eight vertices where only three faces meet have no corner neighbour; the convolutions therefore see a slightly different neighbourhood at the edges, and the loss, a global average, does not penalise a pattern confined to a few pixels.
+
+\section{Discussion and next steps}
+
+This first test shows that the statistical constraint of \citet{delouis2022} can train a network instead of driving a per-map optimisation: on the sky it is trained on, the U-Net reproduces the scattering covariances of the clean map to one ergodic standard deviation from noisy data only, at a cost of one network evaluation per map. It also shows the limits of training on one sky. The steps towards an application to the \textit{Planck} data are:
+\begin{enumerate}
+  \item \emph{Many skies.} Train on $Q$, $U$ and $I$ at several frequencies, on rotated skies and on syntheses from the scattering covariances themselves, so that the network is amortised over skies and not only over noise; keep held-out skies for testing.
+  \item \emph{Noise levels.} Draw the noise amplitude at random during training, so that one network covers the signal-to-noise range of the data; condition the network on $\sigma(p)$ for the non-uniform case.
+  \item \emph{Realistic noise.} Replace white noise by draws of the FFP10 simulations themselves, which carry the stripes and the large-scale correlations of the PR3 noise; Eq.~\eqref{eq:loss} only needs samples of $n$.
+  \item \emph{Full loss.} Add the further terms of \citet{delouis2022}, in particular the cross statistics between $u$ and $d-u$, and compare $u$ with the L-BFGS solution of the same loss on the same map: the per-map optimum is the reference the amortised denoiser must approach.
+  \item \emph{Resolution and geometry.} Move to $\nside=256$ and beyond on the HPC GPUs, joint $Q,U$ maps, and the orientation-aware (gauge-equivariant) convolutions of our spherical U-Nets, which also address the face-edge artefacts.
+\end{enumerate}
+
+\begin{acknowledgements}
+The scattering statistics are computed with STL-Dev-MPI \citep{stldev}; maps are handled with healpy \citep{zonca2019} and the network with PyTorch \citep{paszke2019}. Based on observations obtained with \textit{Planck} (\url{http://www.esa.int/Planck}), an ESA science mission with instruments and contributions directly funded by ESA Member States, NASA, and Canada.
+\end{acknowledgements}
+
+\bibliographystyle{aa}
+\bibliography{refs}
 
 \end{document}

@@ -12,3 +12,6 @@ text/*.bbl
 text/*.blg
 text/*.out
 text/*.pdf
+text/*.fdb_latexmk
+text/*.fls
+text/*.synctex.gz
