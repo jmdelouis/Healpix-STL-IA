@@ -89,11 +89,29 @@ class SphereConv(nn.Module):
         return F.linear(taps, self.weight, self.bias).transpose(1, 2)
 
 
+class PixelNorm(nn.Module):
+    """Normalisation over the channels of every pixel (`[B, C, N]`): the
+    network stays local, so that it is the same on a patch and on the sky."""
+
+    def __init__(self, c):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(c, 1))
+        self.bias = nn.Parameter(torch.zeros(c, 1))
+
+    def forward(self, x):
+        x = (x - x.mean(1, keepdim=True)) * torch.rsqrt(x.var(1, keepdim=True, unbiased=False) + 1e-5)
+        return x * self.weight + self.bias
+
+
+def make_norm(kind, c):
+    return PixelNorm(c) if kind == "pixel" else nn.GroupNorm(min(8, c), c)
+
+
 class SphereBlock(nn.Module):
-    def __init__(self, cin, cout, ksz, slope):
+    def __init__(self, cin, cout, ksz, slope, norm="group"):
         super().__init__()
         self.c1, self.c2 = SphereConv(cin, cout, ksz), SphereConv(cout, cout, ksz)
-        self.n1, self.n2 = nn.GroupNorm(min(8, cout), cout), nn.GroupNorm(min(8, cout), cout)
+        self.n1, self.n2 = make_norm(norm, cout), make_norm(norm, cout)
         self.act = nn.LeakyReLU(slope)
 
     def forward(self, x, level):
@@ -141,11 +159,17 @@ def default_channels(levels):
 class UNet(nn.Module):
     """`levels` resolutions from `nside` down to `nside / 2^(levels-1)`."""
 
-    def __init__(self, nside, levels=4, channels=None, slope=0.2, conv="sphere", gauge="phi", ksz=3):
+    def __init__(self, nside, levels=4, channels=None, slope=0.2, conv="sphere", gauge="phi", ksz=3, norm="group",
+                 scale=None):
+        """`norm`: 'group' (GroupNorm over the map) or 'pixel' (over the
+        channels of every pixel: required to train on patches and apply on the
+        sky).  `scale`: fixed input scale (uK); None uses the std of every map."""
         super().__init__()
         assert nside >> (levels - 1) >= 1, "too many levels for nside"
         assert conv in ("sphere", "faces")
+        assert conv == "sphere" or norm == "group", "face images: GroupNorm only"
         self.nside, self.levels, self.conv, self.gauge, self.ksz = nside, levels, conv, gauge, ksz
+        self.norm, self.scale = norm, scale
         ch = list(channels or default_channels(levels))
         assert len(ch) == levels, "one channel count per level"
         self.channels = ch
@@ -153,9 +177,9 @@ class UNet(nn.Module):
         self.dec = nn.ModuleList()
         if conv == "sphere":
             for k, c in enumerate(ch):
-                self.enc.append(SphereBlock(1 if k == 0 else ch[k - 1], c, ksz, slope))
+                self.enc.append(SphereBlock(1 if k == 0 else ch[k - 1], c, ksz, slope, norm))
             for k in range(levels - 2, -1, -1):
-                self.dec.append(SphereBlock(ch[k + 1] + ch[k], ch[k], ksz, slope))
+                self.dec.append(SphereBlock(ch[k + 1] + ch[k], ch[k], ksz, slope, norm))
             self.head = nn.Conv1d(ch[0], 1, 1)
             self.geometry = None
         else:
@@ -173,7 +197,27 @@ class UNet(nn.Module):
 
     def config(self):
         return {"nside": self.nside, "levels": self.levels, "channels": self.channels, "conv": self.conv,
-                "gauge": self.gauge, "ksz": self.ksz}
+                "gauge": self.gauge, "ksz": self.ksz, "norm": self.norm, "scale": self.scale}
+
+    def input_scale(self, d):
+        return d.std() if self.scale is None else torch.as_tensor(self.scale, dtype=d.dtype, device=d.device)
+
+    def forward_patches(self, d, patches):
+        """`d`: `[B, n]` values on the flat pixels of `patches`
+        (`stlia.regions.Patches`, levels as the network); returns `u`."""
+        assert self.conv == "sphere" and self.norm == "pixel", "patches need sphere convolutions and pixel norm"
+        scale = self.input_scale(d)
+        x = (d / scale).float()[:, None]
+        skips = []
+        for k, enc in enumerate(self.enc):
+            if k:
+                x = patches.pool(x, k - 1)
+            x = enc(x, patches.levels[k])
+            skips.append(x)
+        for i, dec in enumerate(self.dec):
+            k = self.levels - 2 - i
+            x = dec(torch.cat([patches.up(x, k), skips[k]], 1), patches.levels[k])
+        return d - scale * self.head(x)[:, 0].to(d.dtype)
 
     def stencils(self, device):
         """Stencils of every level, built on first use on the device of the maps."""
@@ -181,8 +225,11 @@ class UNet(nn.Module):
             self.geometry = [SphereLevel(self.nside >> k, self.ksz, self.gauge, device) for k in range(self.levels)]
         return self.geometry
 
-    def forward(self, d, scale):
-        """`d`: NESTED maps `[B, 12 nside^2]`; returns `u` with the dtype of `d`."""
+    def forward(self, d, scale=None):
+        """`d`: NESTED maps `[B, 12 nside^2]`; returns `u` with the dtype of `d`.
+        `scale` overrides the input scale of the network."""
+        if scale is None:
+            scale = self.input_scale(d)
         x = (d / scale).float()
         if self.conv == "sphere":
             geo = self.stencils(x.device)
@@ -214,6 +261,7 @@ class UNet(nn.Module):
 def load(path, device):
     ck = torch.load(path, map_location=device, weights_only=False)
     net = UNet(ck["nside"], ck["levels"], ck["channels"], conv=ck.get("conv", "faces"),
-               gauge=ck.get("gauge", "phi"), ksz=ck.get("ksz", 3)).to(device)
+               gauge=ck.get("gauge", "phi"), ksz=ck.get("ksz", 3), norm=ck.get("norm", "group"),
+               scale=ck.get("scale")).to(device)
     net.load_state_dict(ck["state"])
     return net.eval(), ck
