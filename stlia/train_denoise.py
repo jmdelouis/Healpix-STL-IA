@@ -79,6 +79,30 @@ TERMS = ("data", "res", "cross", "l1", "l2", "l3", "cl")
 DELOUIS = ("l1", "l2", "l3")
 
 
+def unbiased(plan, term):
+    """`[ncoeff]` bool: the coefficients of `term` whose noise average equals the
+    noise-free statistic, i.e. without noise bias.  The noise enters them only
+    linearly, and is never under a modulus or a root:
+
+    - data, Phi(u + n): the mean;
+    - l1, Phi(u + n1, u + n2): S2, <a_z conj(b_z)>, bilinear, the two noises independent;
+    - l2, Phi(u + n, u): S2, and S3 with the modulus of u (c1 = 1: modulus of b);
+    - l3, Phi(T, u + n): S2, and S3 with the modulus of T (c1 = 0: modulus of a).
+
+    S1 (root normalisation), S4 (moduli of both maps), the variance and the S3
+    with the modulus of a noisy map are biased."""
+    fam = np.array([c["family"] for c in plan])
+    c1 = np.array([c.get("c1", -1) for c in plan])
+    if term == "data":
+        return fam == "mean"
+    out = fam == "S2"
+    if term == "l2":
+        out |= (fam == "S3") & (c1 == 1)
+    if term == "l3":
+        out |= (fam == "S3") & (c1 == 0)
+    return out
+
+
 class CrossStats(torch.autograd.Function):
     """Full-sky cross statistics S(a_i, b_i) of the pairs `a`, `b` `[N, npix]`
     (`NativeEngine(..., cross=True)`, GPU) -> `[N, ncoeff, 2]`; the moments of
@@ -222,6 +246,10 @@ def parser():
                         "frozen: Phi(u) + B, the noise bias B estimated at a fixed u and kept constant "
                         "(Delouis et al. 2022); needs fixed observations (--real or --optimizer lbfgs)")
     p.add_argument("--bias-realizations", type=int, default=40, help="frozen: noise draws of a bias estimate")
+    p.add_argument("--bias-all", action="store_true",
+                   help="frozen: estimate a bias for every coefficient, also those whose noise average is the "
+                        "noise-free statistic (S2 of the cross terms, ...; see unbiased()); by default their "
+                        "bias is zero")
     p.add_argument("--bias-every", type=int, default=50,
                    help="frozen, network: steps between two bias estimates (L-BFGS: one per round)")
     return p
@@ -297,6 +325,9 @@ def main(argv=None):
         xeng = NativeEngine(a.nside, j, batch=3 + 3 * B, backend="gpu", device=a.device, cross=True, **mk)
         xrun = {"engine": xeng, "generation": 0}
         xloss = DenoiseLoss(xeng.plan, a.nside, device=dev, masks=K, npix=xeng.native_pixels() if mk else None)
+    # coefficients without noise bias (frozen biases: B = 0 there, unless --bias-all), K masks each
+    exact = {t: torch.as_tensor(np.tile(unbiased(one.plan if t == "data" else xeng.plan, t), K), device=dev)
+             for t in ("data",) + (DELOUIS if a.halfmission else ())}
     nlev = int(math.log2(a.nside)) - 1
 
     def forward1(m):
@@ -395,6 +426,9 @@ def main(argv=None):
                 bias["l1"] = acc["l1"] / M - uu
                 bias["l2"] = acc["l2"] / M - uu
                 bias["l3"] = acc["l3"] / M - tu
+            if not a.bias_all:
+                for t in bias:
+                    bias[t][exact[t]] = 0  # no noise bias there: the estimate would only add scatter
         return bias
 
     def frozen_losses(u, d, field, bias, hm=None):

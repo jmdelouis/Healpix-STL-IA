@@ -36,8 +36,7 @@
 {Scattering-transform statistics can separate a non-Gaussian sky component from noise without any clean training data: in \citet{delouis2022} the denoised \textit{Planck} dust map is the solution of an optimisation, run pixel by pixel with L-BFGS, that makes the statistics of the denoised map plus noise match those of the observed map.}
 {We replace this per-map optimisation by a network: a U-Net on the HEALPix sphere maps an observed map $d$ to a denoised map $u$ in one evaluation, and is trained with the same statistical constraint, so that no clean sky is ever used.}
 {The convolutions of the network are those of the scattering statistics: the STL/FOSCAT stencil, defined in the tangent plane of every pixel and interpolated on the HEALPix grid, with no base-face edges; its pooling is the NESTED pyramid. The loss compares the scattering covariances of $u+n_i$, for noise realisations $n_i$, with those of $d$, with the ergodic weights of the STL-Dev-MPI library, whose Rust engine gives the statistics and their exact gradient. We train on the \textit{Planck} PR3 353\,GHz $Q$ map at $\nside=64$, with white noise either uniform or with the per-pixel level of the PR3 noise simulations, and test on the $U$ map, never seen during training.}
-{On the training sky the denoised map recovers the scattering covariances of the clean sky to about one ergodic standard deviation, against up to fifty for the noisy map, and the pixel error falls to 0.4 times the noise. On the test sky the network still improves most families of statistics and reduces the pixel error to about 0.57 times the noise, but it remains far from the per-map optimum, which points to the single training sky as the main limitation. The sphere convolutions remove the face-edge artefacts of planar convolutions on the HEALPix faces. At $
-side=256$ with draws of the FFP10 noise simulations, the auto loss brings the first-order scattering coefficients of $U$ from 27 to 2 standard deviations of the sky; the cross-statistics losses of \citet{delouis2022}, computed on the GPU or on $10^\circ$ disc patches, leave the mean of the map unconstrained and need an additional auto term.}
+{On the training sky the denoised map recovers the scattering covariances of the clean sky to about one ergodic standard deviation, against up to fifty for the noisy map, and the pixel error falls to 0.4 times the noise. On the test sky the network still improves most families of statistics and reduces the pixel error to about 0.57 times the noise, but it remains far from the per-map optimum, which points to the single training sky as the main limitation. The sphere convolutions remove the face-edge artefacts of planar convolutions on the HEALPix faces. At $\nside=256$ with draws of the FFP10 noise simulations, the auto loss brings the first-order scattering coefficients of $U$ from 27 to 2 standard deviations of the sky; the cross-statistics losses of \citet{delouis2022}, computed on the GPU or on $10^\circ$ disc patches, leave the mean of the map unconstrained and need an additional auto term.}
 {An amortised scattering denoiser is a direct, cheap replacement for the per-map optimisation; its generalisation now requires training on many skies and noise levels.}
 
 \keywords{Methods: data analysis -- Methods: statistical -- ISM: dust, extinction -- Techniques: image processing}
@@ -82,7 +81,37 @@ The amortised denoiser is compared with the method it replaces: the same loss mi
 
 \subsection{Frozen noise biases, spectrum loss and conditioning}\label{sec:variants}
 
-\paragraph{Noise biases.} In the runs above the model side of every term is the average over $B=4$ draws, at the current $u$, of the statistics of $u$ plus noise, with the gradient through it: the noise bias is never formed. In \citet{delouis2022} the bias of each term, $B_k=\langle\Phi_k(u_0+n_i)\rangle-\Phi_k(u_0)$, is estimated at a fixed map $u_0$ with many realisations and frozen, the model being $\Phi_k(u)+B_k$ with the gradient through $\Phi_k(u)$ only. We implement this scheme with $M=40$ realisations, the bias being re-estimated at the start of every L-BFGS round, or every 50 steps from the current output of the network.
+\paragraph{Which coefficients have a noise bias.} The noise bias of a coefficient is $\langle\Phi_k(u+n)\rangle-\Phi_k(u)$, where the noise enters as in the model of the term ($u+n$, or $u+\tilde n_1$ and $u+\tilde n_2$). It vanishes exactly when the noise enters the coefficient only linearly, since the noise has zero mean and the two half-mission noises are independent. With $a_z=\psi*a$ the wavelet coefficients of a map $a$, the cross coefficients of the engine are:
+\begin{itemize}
+  \item $S_1(a,b)=\langle\hat a_z\,\hat b_z^*\rangle$, with $\hat a_z=a_z/\sqrt{|a_z|+\epsilon}$;
+  \item $S_2(a,b)=\langle a_z\,b_z^*\rangle$;
+  \item $S_3(a,b)$, built on $\langle[\psi*|a_z|]\,b_z^*\rangle$ and given in both orders;
+  \item $S_4(a,b)=\langle[\psi*|a_z|]\,[\psi*|b_z|]^*\rangle$.
+\end{itemize}
+$S_2$ is bilinear. $S_3$ is linear in the map outside the modulus. $S_1$ and $S_4$ pass both maps through a modulus or a root. The auto statistics $\Phi(a)=\Phi(a,a)$ add the mean, which is linear, and the variance. Table~\ref{tab:bias} follows, with $T$ treated as noise-free (the 857\,GHz noise is independent of the 353\,GHz noise and small next to the dust). In $L_2$ and $L_3$, $S_3$ has no bias in the order where the noise-free map ($u$ or $T$) is under the modulus, and the noisy map $u+\tilde n$ enters linearly. The cross spectrum of $L_{\rm cl}$ (below) has no bias at all. We checked the table with the engine on a Gaussian map at $\nside=16$ with white noise of half its rms. Over 200 draws, the mean of the coefficients listed without bias departs from the noise-free value by 1.0 to 1.2 standard errors (median), against 10 to 18 for $S_1$, 19 for the auto $S_2$, 4 to 7 for $S_4$ and 2.3 to 2.8 for the biased $S_3$.
+
+\begin{table}
+  \caption{Coefficients with and without noise bias in the model of each term. $S_3[|a|,b]$ is the order of $S_3$ with the modulus of $a$, linear in $b$. The 857\,GHz map $T$ is treated as noise-free.}
+  \label{tab:bias}
+  \centering\small
+  \begin{tabular}{lll}
+    \hline\hline
+    model & no noise bias & noise bias \\
+    \hline
+    $\Phi(u+n)$ & mean & variance, $S_1$--$S_4$ \\
+    $\Phi(u+\tilde n_1,u+\tilde n_2)$ & $S_2$ & $S_1$, $S_3$, $S_4$ \\
+    $\Phi(u+\tilde n,u)$ & $S_2$, $S_3[|u|,u+\tilde n]$ & $S_1$, $S_3[|u+\tilde n|,u]$, $S_4$ \\
+    $\Phi(T,u+\tilde n)$ & $S_2$, $S_3[|T|,u+\tilde n]$ & $S_1$, $S_3[|u+\tilde n|,T]$, $S_4$ \\
+    $C_b(u+\tilde n_1,u+\tilde n_2)$ & all bins & none \\
+    \hline
+  \end{tabular}
+\end{table}
+
+\paragraph{Live and frozen biases.} In the runs above (``live'' biases), the model side of every scattering term is the average over $B=4$ draws, at the current $u$, of the statistics of $u$ plus noise, with the gradient through it. The noise bias is never formed. For the coefficients without bias, the draws only add scatter around the noise-free value.
+
+In \citet{delouis2022}, the biases are frozen. The bias of each term, $B_k=\langle\Phi_k(u_0+n_i)\rangle-\Phi_k(u_0)$, is estimated at a fixed map $u_0$ with many realisations and kept constant. The model is $\Phi_k(u)+B_k$, with the gradient through $\Phi_k(u)$ only. We implement this scheme with $M=40$ realisations. The bias is re-estimated at the start of every L-BFGS round, or every 50 steps from the current output of the network.
+
+$B_k$ is estimated only for the coefficients with a noise bias (Table~\ref{tab:bias}), and set to zero for the others. For those, an estimate would be zero up to the scatter of the $M$ draws, and subtracting it would only add that scatter, refreshed at every estimate, and could make the solution drift. The first L-BFGS run with frozen biases (Table~\ref{tab:real}) still estimated $B_k$ for every coefficient. The spectrum term never has a bias, live or frozen.
 
 \paragraph{Masked statistics.} The full-sky ergodic weights of the scattering statistics are dominated by the Galactic plane, so that the faint high-latitude sky is hardly constrained. As in \citet{delouis2022}, every coefficient of every term can also be averaged under galactic masks, $|b|>0^\circ$, $20^\circ$, $30^\circ$ and $45^\circ$, each with its own ergodic weight. The wavelet fields remain those of the full sky; only the averages that define the coefficients are restricted to the mask, the mask of each coarser level containing the parents of the finer one. The masked averages and their gradient are computed by the STL-Dev-MPI engine, for 16\% (auto) to 27\% (cross) more time than the full-sky statistics with five masks.
 
@@ -281,7 +310,7 @@ In the mock tests of Sects.~3 and \ref{sec:n256} the ``clean'' sky is the PR3 ma
   \label{fig:lbfgsfz}
 \end{figure}
 
-\paragraph{Frozen noise biases.} With the biases frozen as in \citet{delouis2022} (Sect.~\ref{sec:variants}; 10 rounds of 50 L-BFGS iterations, the biases re-estimated with 40 realisations at the start of every round, 6.5\,min per round), the per-map solution no longer changes the large scales: the spectrum of $d-u$ is within 16\% of the noise for $30\le\ell<60$, against a factor 3 without frozen biases, and the spectra of $u$ follow the cross spectrum to within 6\% (EE) and 4\% (BB) there (Table~\ref{tab:real}, Fig.~\ref{fig:lbfgsfz}). At small scales it removes more power: $u$ reaches only 30\% (EE) and 43\% (BB) of the cross spectrum for $200\le\ell<300$. A possible reason, which we have not tested, is that the frozen bias is estimated at a $u$ that still contains part of the noise, and overestimates the bias of the cleaner map it leads to. The network trained with the biases not frozen keeps the best balance of the three: it is the closest to the cross spectrum at all scales up to $\ell=200$ and loses less power beyond.
+\paragraph{Frozen noise biases.} With the biases frozen as in \citet{delouis2022} (Sect.~\ref{sec:variants}; 10 rounds of 50 L-BFGS iterations, the biases re-estimated with 40 realisations at the start of every round, 6.5\,min per round; in this run a bias was estimated for every coefficient, including those of Table~\ref{tab:bias} without noise bias), the per-map solution no longer changes the large scales: the spectrum of $d-u$ is within 16\% of the noise for $30\le\ell<60$, against a factor 3 without frozen biases, and the spectra of $u$ follow the cross spectrum to within 6\% (EE) and 4\% (BB) there (Table~\ref{tab:real}, Fig.~\ref{fig:lbfgsfz}). At small scales it removes more power: $u$ reaches only 30\% (EE) and 43\% (BB) of the cross spectrum for $200\le\ell<300$. A possible reason, which we have not tested, is that the frozen bias is estimated at a $u$ that still contains part of the noise, and overestimates the bias of the cleaner map it leads to. The network trained with the biases not frozen keeps the best balance of the three: it is the closest to the cross spectrum at all scales up to $\ell=200$ and loses less power beyond.
 
 The network runs with frozen biases, the spectrum loss, the 857\,GHz conditioning and the masked statistics (Sect.~\ref{sec:variants}) are in progress; the spectrum loss and the masks address the deficit at small scales directly.
 

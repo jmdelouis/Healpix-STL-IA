@@ -63,6 +63,28 @@ is estimated with $M$ = `--bias-realizations` draws (40 by default). The model i
 
 The loss needs no noise draw between two estimates, and each step is cheaper. The scheme needs fixed observations: `--real`, or `--optimizer lbfgs`.
 
+### Which coefficients have a noise bias
+
+The bias $\langle\Phi_k(u+n)\rangle-\Phi_k(u)$ of a coefficient is exactly zero when the noise enters it only linearly, since the noise has zero mean and the half-mission noises are independent. In the cross statistics of the engine:
+
+- $S_2(a,b)=\langle a_z b_z^*\rangle$ is bilinear;
+- $S_3$ is linear in one map and takes the modulus of the other. It is given in both orders: `c1 = 0` takes the modulus of $a$, `c1 = 1` that of $b$;
+- $S_1$ (root normalisation) and $S_4$ (moduli of both maps) are not linear.
+
+Hence ({func}`stlia.train_denoise.unbiased`, with $T$ treated as noise-free):
+
+| term | model | no noise bias | noise bias |
+|---|---|---|---|
+| `data` | $\Phi(u+n)$ | mean | variance, $S_1$–$S_4$ |
+| `l1` | $\Phi(u+\tilde n_1, u+\tilde n_2)$ | $S_2$ | $S_1$, $S_3$, $S_4$ |
+| `l2` | $\Phi(u+\tilde n, u)$ | $S_2$, $S_3$ with the modulus of $u$ | $S_1$, $S_3$ with the modulus of $u+\tilde n$, $S_4$ |
+| `l3` | $\Phi(T, u+\tilde n)$ | $S_2$, $S_3$ with the modulus of $T$ | $S_1$, $S_3$ with the modulus of $u+\tilde n$, $S_4$ |
+| `cl` | $C_b(u+\tilde n_1, u+\tilde n_2)$ | all bins | none |
+
+A check with the engine (a Gaussian map at $\nside=16$, white noise of half its rms, 200 draws) agrees. The mean over the draws of the coefficients without bias departs from the noise-free value by 1.0 to 1.2 standard errors (median), against 10 to 18 for $S_1$, 19 for the auto $S_2$, 4 to 7 for $S_4$ and 2.3 to 2.8 for the biased $S_3$.
+
+With `frozen`, $B_k$ is estimated only for the coefficients with a noise bias, and is zero for the others. An estimate there would be zero up to the scatter of the $M$ draws, and subtracting it would only add that scatter. `--bias-all` estimates every coefficient: the run `l256_fz` used it. With `live`, all scattering coefficients are averaged over the draws, which only add scatter to the unbiased ones. The `cl` term never uses draws (see *Spectrum loss*).
+
 ## Masked statistics
 
 With `--stat-masks 0,20,30,45`, every scattering coefficient of every term (`data`, `l1`, `l2`, `l3`) enters once per galactic mask $|b| > b_0$ ($b_0 = 0$: the full sky). Each entry has its own ergodic weight, computed from the variance and the number of pixels averaged under that mask (Delouis et al. 2022 used five masks).

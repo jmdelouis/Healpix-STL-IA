@@ -45,3 +45,15 @@ def test_loss_with_masks():
     s = torch.zeros(1, 2 * len(p), 2, dtype=torch.float64)
     s[..., 0] = torch.sqrt(var / loss.npix)
     torch.testing.assert_close(loss(s, target, var), torch.tensor(1.0, dtype=torch.float64))
+
+
+def test_unbiased_coefficients():
+    """The noise bias is zero only where the noise enters linearly."""
+    from stlia.train_denoise import unbiased
+    plan = [{"family": f, "c1": c1} for f, c1 in
+            (("mean", -1), ("var", -1), ("S1", 0), ("S2", 0), ("S3", 0), ("S3", 1), ("S4", 0), ("S4", 1))]
+    #                           mean   var    S1     S2     S3 |a| S3 |b| S4     S4
+    assert list(unbiased(plan, "data")) == [1, 0, 0, 0, 0, 0, 0, 0]
+    assert list(unbiased(plan, "l1")) == [0, 0, 0, 1, 0, 0, 0, 0]
+    assert list(unbiased(plan, "l2")) == [0, 0, 0, 1, 0, 1, 0, 0]  # Phi(u + n, u): modulus of u
+    assert list(unbiased(plan, "l3")) == [0, 0, 0, 1, 1, 0, 0, 0]  # Phi(T, u + n): modulus of T
