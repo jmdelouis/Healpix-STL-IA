@@ -47,7 +47,16 @@ error relative to the noise, statistics of `u` and of `d` against those of the
 sky (rms per family in units of the ergodic sigma of the sky), the variance of
 the 4-children details per level, and the three loss terms.
 
-Writes RUN/model.pt, RUN/train.json, RUN/eval_{field}.npz (sky, d, u).
+With `--real` the observations are the PR3 maps themselves: d is the
+full-mission map and (d1, d2) the half-mission maps of the field, the network
+is trained on both fields (train and test fields alternately, the same fixed d
+every time: an amortised form of the per-map optimisation of Delouis et al.),
+and the noise draws only enter the realisations n_i.  There is no clean sky:
+the evaluation reports the rms of d - u over the noise rms (1 when u removes
+as much as the noise), and the statistics of u against those of d.
+
+Writes RUN/model.pt, RUN/train.json, RUN/eval_{field}.npz (sky, d, u; with
+`--real`, sky = d).
 """
 
 import argparse
@@ -158,6 +167,7 @@ def main():
     p.add_argument("--sims-train", default="10-49")
     p.add_argument("--sims-test", default="0-9")
     p.add_argument("--realizations", type=int, default=4)
+    p.add_argument("--real", action="store_true", help="denoise the PR3 maps themselves (no mock sky)")
     p.add_argument("--loss", default="data=1,res=1,cross=1",
                    help="weights of the terms data, res, cross and of the Delouis et al. (2022) terms l1, l2, l3")
     p.add_argument("--levels", type=int, default=None, help="default: down to nside 8")
@@ -276,8 +286,18 @@ def main():
         n, n1, n2 = noise[f].draw(1, test=test, generator=generator, hm=True)
         return s + n[0], (s + n1[0], s + n2[0])
 
-    fixed = {f: (s, *observe(f, s, test=True, generator=gen))
-             for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
+    def real_obs(f):
+        """(d, (d1, d2) or None): the PR3 full- and half-mission maps of field f."""
+        hm = tuple(torch.as_tensor(np.load(os.path.join(a.data, f"planck353hm{h}_{f}_n{a.nside}.npy")), device=dev)
+                   for h in (1, 2)) if a.halfmission else None
+        return load(f), hm
+
+    if a.real:
+        fixed = {f: (s, *real_obs(f)) for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
+    else:
+        fixed = {f: (s, *observe(f, s, test=True, generator=gen))
+                 for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
+    fields = list(fixed)
 
     def evaluate(save=False):
         net.eval()
@@ -316,9 +336,14 @@ def main():
     show(0, evals[0])
     started = time.time()
     for step in range(1, a.steps + 1):
-        d, hm = observe(a.train_field, train_sky)
+        if a.real:
+            f = fields[step % len(fields)]
+            _, d, hm = fixed[f]
+        else:
+            f = a.train_field
+            d, hm = observe(f, train_sky)
         u = net(d[None], d.std())[0]
-        terms = losses(u, d, a.train_field, hm=hm)
+        terms = losses(u, d, f, hm=hm)
         loss = sum(weights[k] * v for k, v in terms.items())
         opt.zero_grad(set_to_none=True)
         loss.backward()
