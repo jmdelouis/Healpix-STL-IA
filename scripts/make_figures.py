@@ -2,8 +2,13 @@
 
     python make_figures.py RUNS_DIR OUT_DIR
 
-RUNS_DIR holds n64_base, n64_flip, n64_pr3, n64_pr3x4 (train.json,
-eval_{Q,U}.npz).  Writes OUT_DIR/*.pdf and OUT_DIR/results_table.tex.
+RUNS_DIR holds the sphere-convolution runs sph_base, sph_cosmo, sph_pr3,
+sph_pr3x4 and the face-image run n64_base (train.json, eval_{Q,U}.npz).
+Writes OUT_DIR/*.pdf and OUT_DIR/results_table.tex.
+
+Edge ratio: rms of the 4-children detail of the error u - s on the pixels
+along the base-face edges over the rms on the other pixels (1 when the
+error ignores the faces).
 """
 
 import json
@@ -17,11 +22,29 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-RUNS = [("n64_base", r"uniform, $\sigma=0.5\,\sigma_Q$"),
-        ("n64_flip", r"uniform, $\pm$ sky"),
-        ("n64_pr3", r"PR3 $\sigma(p)$"),
-        ("n64_pr3x4", r"PR3 $4\,\sigma(p)$")]
+RUNS = [("sph_base", r"uniform, gauge $\phi$"),
+        ("sph_cosmo", r"uniform, gauge cosmo"),
+        ("sph_pr3", r"PR3 $\sigma(p)$"),
+        ("sph_pr3x4", r"PR3 $4\,\sigma(p)$")]
+FACES = ("n64_base", r"uniform, face images")
 FAMILIES = ("var", "S1", "S2", "S3", "S4")
+
+
+def edge_mask(nside):
+    from stlia import healpix_faces as hf
+
+    m = np.zeros((12, nside, nside), bool)
+    m[:, 0], m[:, -1], m[:, :, 0], m[:, :, -1] = True, True, True, True
+    out = np.zeros(12 * nside * nside, bool)
+    out[hf.face_nest(nside).ravel()] = m.ravel()
+    return out
+
+
+def edge_ratio(maps):
+    r = maps["u"] - maps["sky"]
+    det = r - np.repeat(r.reshape(-1, 4).mean(1), 4)
+    e = edge_mask(int(round(np.sqrt(r.size / 12))))
+    return float(np.sqrt((det[e] ** 2).mean() / (det[~e] ** 2).mean()))
 
 
 def load(runs, name):
@@ -56,12 +79,24 @@ def maps_figure(maps, out, title):
 def main():
     runs, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
-    data = {n: load(runs, n) for n, _ in RUNS}
+    data = {n: load(runs, n) for n, _ in RUNS + [FACES]}
 
-    maps_figure(data["n64_base"][1], os.path.join(out, "maps_uniform.pdf"),
+    maps_figure(data["sph_base"][1], os.path.join(out, "maps_uniform.pdf"),
                 r"Uniform white noise, $\sigma = 0.5\,{\rm std}(Q)$; trained on Q, tested on U")
-    maps_figure(data["n64_pr3x4"][1], os.path.join(out, "maps_pr3x4.pdf"),
+    maps_figure(data["sph_pr3x4"][1], os.path.join(out, "maps_pr3x4.pdf"),
                 r"White noise with $4\times$ the PR3 per-pixel level; trained on Q, tested on U")
+
+    fig = plt.figure(figsize=(9, 4.6))
+    cases = [FACES, RUNS[0], RUNS[1]]
+    for row, f in enumerate(("Q", "U")):
+        lim = np.percentile(np.abs(data[FACES[0]][1][f]["d"] - data[FACES[0]][1][f]["sky"]), 99) / 2
+        for c, (n, lab) in enumerate(cases):
+            m = data[n][1][f]
+            hp.mollview(m["u"] - m["sky"], nest=True, fig=fig.number, sub=(2, 3, 3 * row + c + 1), min=-lim, max=lim,
+                        cmap="RdBu_r", title=f"{f}: $u-s$, {lab}\nedge ratio {edge_ratio(m):.2f}", cbar=True,
+                        unit=r"$\mu$K", notext=True)
+    fig.savefig(os.path.join(out, "artefacts.pdf"), bbox_inches="tight")
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(5, 3.4))
     for n, lab in RUNS:
@@ -78,7 +113,6 @@ def main():
     x = np.arange(len(FAMILIES))
     w = 0.8 / (len(RUNS) + 1)
     for ax, f in zip(axes, ("Q", "U")):
-        e0 = final_eval(data["n64_base"][0])[f]
         for i, (n, lab) in enumerate(RUNS):
             e = final_eval(data[n][0])[f]
             ax.bar(x + i * w, [e["stats_u_vs_sky"][k] for k in FAMILIES], w, label=f"$u$, {lab}")
@@ -112,7 +146,7 @@ def main():
     plt.close(fig)
 
     rows = []
-    for n, lab in RUNS:
+    for n, lab in RUNS + [FACES]:
         tj = data[n][0]
         rms = tj.get("noise_rms") or {f: tj["sigma"] for f in ("Q", "U")}  # uniform runs: one sigma
         for f in ("Q", "U"):
@@ -120,6 +154,7 @@ def main():
             e0 = tj["evals"]["0"][f]
             cells = " & ".join(f"{e['stats_u_vs_sky'][k]:.2g} ({e0['stats_d_vs_sky'][k]:.2g})" for k in ("S1", "S2", "S3", "S4"))
             rows.append(f"{lab} & {f} & {rms[f]:.3g} & {e['pixel_rms_error_over_noise']:.2f} & "
+                        f"{edge_ratio(data[n][1][f]):.2f} & "
                         f"{e['data_loss']:.2g} ({e0['data_loss']:.2g}) & {cells} \\\\")
     with open(os.path.join(out, "results_table.tex"), "w") as fh:
         fh.write("\n".join(rows) + "\n")
