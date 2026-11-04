@@ -135,6 +135,8 @@ def main():
     p.add_argument("--geometry-cache", type=int, default=4096)
     p.add_argument("--stl-backend", default="cpu", choices=["cpu", "gpu"], help="engine of the disc statistics")
     p.add_argument("--cache-bytes", type=float, default=None, help="GPU budget of the disc geometries (default: engine)")
+    p.add_argument("--reserve-bytes", type=float, default=None,
+                   help="GPU memory kept free beyond the disc geometries (STL-Dev-MPI >= 4ae7b9d; default: engine)")
     p.add_argument("--realizations", type=int, default=4)
     p.add_argument("--train-field", default="Q")
     p.add_argument("--test-field", default="U")
@@ -188,8 +190,10 @@ def main():
 
     gpu = a.stl_backend == "gpu"
     if gpu:
+        extra = {} if a.reserve_bytes is None else {"reserve_bytes": int(a.reserve_bytes)}
         pe = PatchEngine(a.nside, a.j, cross=True, backend="gpu", device=dev.index or 0, threads=a.threads,
-                         cache=a.geometry_cache, cache_bytes=None if a.cache_bytes is None else int(a.cache_bytes))
+                         cache=a.geometry_cache, cache_bytes=None if a.cache_bytes is None else int(a.cache_bytes),
+                         **extra)
     else:
         pe = PatchEngine(a.nside, a.j, cross=True, threads=a.threads, cache=a.geometry_cache)
     # Candidate centres: the pixel of `nside` that holds each pixel centre of `centre_nside`.
