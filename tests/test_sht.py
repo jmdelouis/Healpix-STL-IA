@@ -2,6 +2,7 @@
 
 import healpy as hp
 import numpy as np
+import pytest
 import torch
 
 from stlia.sht import HEALPixSHT
@@ -58,3 +59,23 @@ def test_spectrum_loss_zero_at_target():
     loss = SpectrumLoss(spec, d, d)
     assert float(loss(spec(d, d))) < 1e-20
     assert float(loss(spec(1.2 * d, 1.2 * d))) > 0
+
+
+def test_engine_spectra_match_torch():
+    native = pytest.importorskip("stl_port.native")
+    if not hasattr(native, "SpectrumEngine"):
+        pytest.skip("STL-Dev-MPI without SpectrumEngine")
+    kw = dict(masks=(0.0, 20.0), lmin=2, width=4, apod=10.0)
+    ref, eng = BinnedSpectra(NSIDE, **kw), BinnedSpectra(NSIDE, backend="stl", **kw)
+    a = torch.as_tensor(np.stack([nest_map(6), nest_map(7)]))
+    b = torch.as_tensor(np.stack([nest_map(8), nest_map(9)]))
+    torch.testing.assert_close(eng(a, b), ref(a, b), rtol=1e-8, atol=1e-12)
+    torch.testing.assert_close(eng(a[0]), ref(a[0]), rtol=1e-8, atol=1e-12)
+    w = torch.as_tensor(np.random.default_rng(10).normal(size=ref(a, b).shape))
+    grads = []
+    for spec in (ref, eng):
+        x, y = a.clone().requires_grad_(), b.clone().requires_grad_()
+        (spec(x, y) * w).sum().backward()
+        grads.append((x.grad, y.grad))
+    for g, h in zip(*grads):
+        torch.testing.assert_close(g, h, rtol=1e-7, atol=1e-12 * float(h.abs().max()))

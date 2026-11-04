@@ -187,6 +187,9 @@ def parser():
     p.add_argument("--cl-lmax", type=int, default=None, help="cl: last multipole (default 2 nside - 1)")
     p.add_argument("--cl-width", type=int, default=30, help="cl: width of the multipole bins")
     p.add_argument("--cl-apod", type=float, default=5.0, help="cl: FWHM of the mask apodisation (degrees)")
+    p.add_argument("--cl-backend", default="auto", choices=["auto", "torch", "stl"],
+                   help="cl: spectra by the SpectrumEngine of STL-Dev-MPI (stl), by the transforms of stlia.sht "
+                        "(torch), or by the engine when the installed STL-Dev-MPI has it (auto)")
     p.add_argument("--levels", type=int, default=None, help="levels of the U-Net (default: down to nside 8)")
     p.add_argument("--channels", default=None, help="channels per level, comma-separated (default: 32,64,96,128,...)")
     p.add_argument("--cond", default="none", choices=["none", "log857"],
@@ -243,8 +246,13 @@ def main(argv=None):
     train_sky, test_sky = load(a.train_field), load(a.test_field)
     a.halfmission = any(weights[t] for t in DELOUIS + ("cl",))
     if weights["cl"]:
+        if a.cl_backend == "auto":
+            import stl_port.native
+            a.cl_backend = "stl" if hasattr(stl_port.native, "SpectrumEngine") else "torch"
+        print(f"cl: spectra by the {a.cl_backend} backend", flush=True)
         spectra = BinnedSpectra(a.nside, masks=[float(b) for b in a.cl_masks.split(",")], lmin=a.cl_lmin,
-                                lmax=a.cl_lmax, width=a.cl_width, apod=a.cl_apod, device=f"cuda:{a.device}")
+                                lmax=a.cl_lmax, width=a.cl_width, apod=a.cl_apod, device=f"cuda:{a.device}",
+                                backend=a.cl_backend)
         cl_cache = {}
 
         def cl_loss(field, d1, d2):

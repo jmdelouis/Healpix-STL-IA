@@ -85,7 +85,13 @@ Each bin is weighted by the Gaussian variance of the target, $(C_b^{11}C_b^{22} 
 
 This term constrains the power at high Galactic latitude. The full-sky ergodic weights of the scattering statistics hardly do so, because the Galactic plane dominates their variance. With `--bias frozen`, the term is modelled as $C_b(u,u) + B_{\rm cl}$.
 
-The spectra come from a differentiable ring-FFT spherical harmonic transform ({class}`stlia.sht.HEALPixSHT`). It is adapted from [healpix-analyse](https://github.com/GRID4EARTH/healpix-analyse) and FOSCAT, agrees with `healpy.anafast`, and propagates gradients through `torch.autograd`. They are the spectra of the scalar maps, Q and U separately, as the network treats them. E/B spectra (`spin=2`) are available in {class}`~stlia.sht.HEALPixSHT`, but a loss on them needs a joint (Q, U) network.
+The spectra come from one of two differentiable `anafast` (`--cl-backend`), which agree with each other and with `healpy.anafast` to about $10^{-12}$:
+
+- **`stl`**: the `SpectrumEngine` of STL-Dev-MPI (from commit 5648ba1), on the CPU or the GPU, with its exact VJP. `auto`, the default, uses it when the installed engine has it.
+- **`torch`**: a ring-FFT spherical harmonic transform ({class}`stlia.sht.HEALPixSHT`), adapted from [healpix-analyse](https://github.com/GRID4EARTH/healpix-analyse) and FOSCAT, with gradients through `torch.autograd`.
+
+On a T4 at $
+side=256$, the spectra and gradient of 4 pairs of maps under 3 masks take 1.0 s with the engine, against 16 s with `torch`. They are the spectra of the scalar maps, Q and U separately, as the network treats them. E/B spectra (`spin=2`) are available in {class}`~stlia.sht.HEALPixSHT`, but a loss on them needs a joint (Q, U) network.
 
 ## Conditioning on the dust intensity
 

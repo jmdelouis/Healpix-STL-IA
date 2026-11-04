@@ -40,6 +40,8 @@ cd stl/src && cargo build --release -p stl-bridge --features gpu
 
 The masked statistics (`--stat-masks`) need commit `9038114` (branch `claude/masked-stats`, bridge 2026-11-05-v5) or later; the runs of the paper without masks used `66975a4` and `20329e1`, whose full-sky statistics are identical.
 
+The spectrum loss `cl` uses the differentiable `anafast` of the engine (`SpectrumEngine`) from commit `5648ba1` (branch `claude/spectrum`, bridge 2026-11-06-v6), which also has the masked statistics. With an older build, `--cl-backend auto` falls back to the transforms of {mod}`stlia.sht`, which give the same spectra.
+
 The build needs a stable Rust toolchain (`rustup`; the paper used 1.99.1). It needs neither MPI nor libclang. Then point Python to the library and to its wrapper:
 
 ```bash

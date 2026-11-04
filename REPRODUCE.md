@@ -31,6 +31,8 @@ Code:
   - It provides the scattering statistics: the Rust engine `stl-bridge` and its Python wrapper `stl_port.native`.
   - The full-sky runs of Sect. 4 used its parent commit `66975a4dead97b8828721b6fbb67b2147a3fed48`. The full-sky statistics are identical in both commits.
   - `20329e1` adds the GPU disc engine and stops reading disc interpolation cells of weight <= 1e-9, a change at the rounding level.
+  - `9038114` (branch `claude/masked-stats`) adds the masked statistics of the runs `*_mk`.
+  - `5648ba1` (branch `claude/spectrum`, built on `9038114`) adds `SpectrumEngine`, a differentiable `anafast`. With it, `--cl-backend auto` computes the spectrum loss in the engine. Without it, the same loss comes from the transforms of `stlia.sht`; the two agree to 1e-12.
   - The nside 64 runs of Sect. 3 used an earlier build of the same full-sky statistics (branch `claude/amortized-synthesis`).
 
 ## 1. Work directory and environment
@@ -53,6 +55,7 @@ git clone https://github.com/jmdelouis/Healpix-STL-IA $R/src
 git clone https://github.com/jmdelouis/STL-Dev-MPI $R/stl/src
 git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
 # masked statistics (runs *_mk): a second checkout at 9038114 in $R/stl_mk/src, built with STL=stl_mk
+# spectrum loss in the engine: a checkout at 5648ba1 (it also has the masked statistics), built with STL=stl_sp
 ```
 
 `scripts/env.sh` sets the environment from a few variables:
