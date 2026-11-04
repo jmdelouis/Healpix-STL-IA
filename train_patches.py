@@ -31,7 +31,9 @@ of its target on the disc (`PatchEngine` moments / native pixels), averaged
 over the discs.  The noise-induced biases B_k of Delouis et al. are the
 differences between the two sides: they are estimated at every step from the
 realisations instead of being frozen between batches of iterations.  All the
-pairs of a step go through one `forward_cross` / `vjp_cross` of the engine.
+pairs of a step go through one `forward_cross` / `vjp_cross` of the engine;
+with `--stl-backend gpu` through `forward_device` / `vjp_device`, the pairs
+staying on the GPU as one flat float64 tensor ([2, n_i] per pair).
 
 The evaluation applies the network to the whole sky (fields `--train-field`
 and `--test-field`, test simulation `--sims-test`[0]) and compares u with the
@@ -81,16 +83,29 @@ class CrossStats(torch.autograd.Function):
         run["generation"] += 1
         g = run["generation"]
         pe.select(centres, run["radius"], run["core"])
+        ctx.run, ctx.g, ctx.sizes, ctx.device = run, g, sizes, a.device
+        if run["gpu"]:
+            # flat layout of the engine: per pair, [a_i, b_i] concatenated
+            x = torch.cat([torch.stack([ai, bi]).reshape(-1) for ai, bi in
+                           zip(torch.split(a.detach(), sizes), torch.split(b.detach(), sizes))])
+            values, var = pe.forward_device(x.to(torch.float64).contiguous(), moments=True, generation=g)
+            box["var"], box["npix"] = var, pe.native_pixels.copy()
+            return torch.from_numpy(as_real(values).copy()).to(a.device)
         sa = np.split(a.detach().cpu().numpy(), np.cumsum(sizes)[:-1])
         sb = np.split(b.detach().cpu().numpy(), np.cumsum(sizes)[:-1])
         values, var = pe.forward_cross(sa, sb, moments=True, generation=g)
         box["var"], box["npix"] = var, pe.native_pixels.copy()
-        ctx.run, ctx.g, ctx.sizes, ctx.device = run, g, sizes, a.device
         return torch.from_numpy(as_real(values).copy()).to(a.device)
 
     @staticmethod
     def backward(ctx, grad):
         cot = grad.detach().cpu().numpy()
+        if ctx.run["gpu"]:
+            g = ctx.run["engine"].vjp_device(cot[..., 0] + 1j * cot[..., 1], generation=ctx.g)
+            pairs = [x.view(2, -1) for x in torch.split(g, [2 * n for n in ctx.sizes])]
+            ga = torch.cat([x[0] for x in pairs]).to(ctx.device, torch.float32)
+            gb = torch.cat([x[1] for x in pairs]).to(ctx.device, torch.float32)
+            return ga, gb, None, None, None
         ga, gb = ctx.run["engine"].vjp_cross(cot[..., 0] + 1j * cot[..., 1], generation=ctx.g)
         ga = torch.from_numpy(np.concatenate(ga)).to(ctx.device)
         gb = torch.from_numpy(np.concatenate(gb)).to(ctx.device)
@@ -118,6 +133,8 @@ def main():
                    help="disc centres drawn among the pixel centres of this nside (0: every pixel); "
                         "a finite set lets the engine reuse its cached disc geometries")
     p.add_argument("--geometry-cache", type=int, default=4096)
+    p.add_argument("--stl-backend", default="cpu", choices=["cpu", "gpu"], help="engine of the disc statistics")
+    p.add_argument("--cache-bytes", type=float, default=None, help="GPU budget of the disc geometries (default: engine)")
     p.add_argument("--realizations", type=int, default=4)
     p.add_argument("--train-field", default="Q")
     p.add_argument("--test-field", default="U")
@@ -169,7 +186,12 @@ def main():
             cache[(f, k)] = noise(f, k)
         return cache[(f, k)]
 
-    pe = PatchEngine(a.nside, a.j, cross=True, threads=a.threads, cache=a.geometry_cache)
+    gpu = a.stl_backend == "gpu"
+    if gpu:
+        pe = PatchEngine(a.nside, a.j, cross=True, backend="gpu", device=dev.index or 0, threads=a.threads,
+                         cache=a.geometry_cache, cache_bytes=None if a.cache_bytes is None else int(a.cache_bytes))
+    else:
+        pe = PatchEngine(a.nside, a.j, cross=True, threads=a.threads, cache=a.geometry_cache)
     # Candidate centres: the pixel of `nside` that holds each pixel centre of `centre_nside`.
     if a.centre_nside:
         from stlia.regions import pixel_vectors
@@ -178,7 +200,7 @@ def main():
             [int(torch.argmax(fine @ v)) for v in coarse])
     else:
         candidates = np.arange(npix)
-    run = {"engine": pe, "box": {}, "generation": 0, "radius": a.radius, "core": a.core}
+    run = {"engine": pe, "box": {}, "generation": 0, "radius": a.radius, "core": a.core, "gpu": gpu}
     ncoeff = pe.ncoeff
     channels = [int(c) for c in a.channels.split(",")]
     scale = float(sky[a.train_field].std())
@@ -230,7 +252,8 @@ def main():
         ks = [int(x) for x in rng.choice([x for x in pool if x != k], M, replace=False)]
         return k, ks, rng.choice([-1.0, 1.0], M + 1)
 
-    full = NativeEngine(a.nside, int(math.log2(a.nside)) - 1, batch=1, backend="cpu")
+    full = NativeEngine(a.nside, int(math.log2(a.nside)) - 1, batch=1, backend="gpu" if gpu else "cpu",
+                        **({"device": dev.index or 0} if gpu else {}))
     rep = DenoiseLoss(full.plan, a.nside, device=dev)
 
     def auto(m):

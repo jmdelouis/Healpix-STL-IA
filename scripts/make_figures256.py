@@ -96,94 +96,6 @@ def maps_figure(runs, out):
     plt.close(fig)
 
 
-BICEP2 = (316.0, -58.5)  # galactic (l, b) of the centre of the BICEP2 field (RA 0h, Dec -57.5 deg)
-
-
-def denoise_real(runs_dir, name, maps):
-    """Output of the run's network on the PR3 map itself (the real data, d = s),
-    cached in RUNS_DIR/name/real_{Q,U}.npy."""
-    out = {}
-    for f in ("Q", "U"):
-        path = os.path.join(runs_dir, name, f"real_{f}.npy")
-        if not os.path.exists(path):
-            import torch
-
-            from stlia.unet import load as load_net
-
-            net, ck = load_net(os.path.join(runs_dir, name, "model.pt"), "cpu")
-            x = torch.as_tensor(maps[f]["sky"], dtype=torch.float32)
-            with torch.no_grad():
-                u = net(x[None], ck.get("scale") or x.std())[0]
-            np.save(path, u.numpy())
-        out[f] = np.load(path)
-    return out
-
-
-def bicep_figure(runs, out, runs_dir, reso=6.0, xsize=320, real="n256_data"):
-    """Gnomonic views (32 deg) of the BICEP2 field: sky, observation, outputs, and
-    the output of the `real` run on the PR3 map itself; histogram-equalised colours."""
-    done = [(n, lab) for n, lab in RUNS if runs[n][1] is not None]
-    ureal = denoise_real(runs_dir, real, runs[real][1])
-    ncol = 3 + len(done)
-    fig = plt.figure(figsize=(3.2 * ncol, 7.2))
-    for row, f in enumerate(("Q", "U")):
-        m0 = runs[done[0][0]][1][f]
-        panels = [(m0["sky"], f"PR3 map $s$ ({f})"), (m0["d"], "mock observation $d=s+n$")]
-        panels += [(runs[n][1][f]["u"], "$u(d)$: " + lab) for n, lab in done]
-        panels += [(ureal[f], "$u(s)$: PR3 map denoised")]
-        for col, (m, title) in enumerate(panels):
-            hp.gnomview(m, nest=True, rot=BICEP2, reso=reso, xsize=xsize, fig=fig.number,
-                        sub=(2, ncol, row * ncol + col + 1), title=title, norm="hist", cmap="RdBu_r",
-                        notext=True, unit=r"$\mu$K")
-    fig.savefig(os.path.join(out, "bicep256.pdf"), bbox_inches="tight")
-    plt.close(fig)
-
-
-def spectra_figure(runs, out, runs_dir, bcut=30.0, apod=5.0, lmax=600, real="n256_data"):
-    """EE and BB pseudo-spectra over |b| > bcut of d, of the noise n = d - s, of the
-    sky s and of every u.  The training field Q and the test field U are put
-    together as one polarisation map; the mask is smoothed by `apod` deg FWHM."""
-    done = [(n, lab) for n, lab in RUNS if runs[n][1] is not None]
-    m0 = runs[done[0][0]][1]
-    nside = int(round(np.sqrt(m0["Q"]["sky"].size / 12)))
-    theta, _ = hp.pix2ang(nside, np.arange(12 * nside * nside))
-    mask = (np.abs(90.0 - np.degrees(theta)) > bcut).astype(float)
-    mask = np.clip(hp.smoothing(mask, fwhm=np.radians(apod)), 0, 1)
-    w2 = np.mean(mask**2)
-
-    def spec(q, u):
-        qu = [hp.reorder(x, n2r=True) * mask for x in (q, u)]
-        cl = hp.anafast([np.zeros_like(qu[0]), *qu], lmax=lmax) / w2
-        return cl[1], cl[2]
-
-    curves = [("$d$", m0["Q"]["d"], m0["U"]["d"], dict(color="0.4", lw=1.5)),
-              ("$n=d-s$", m0["Q"]["d"] - m0["Q"]["sky"], m0["U"]["d"] - m0["U"]["sky"], dict(color="0.7", lw=1.5)),
-              ("$s$", m0["Q"]["sky"], m0["U"]["sky"], dict(color="k", ls="--", lw=1))]
-    curves += [("$u$: " + lab, runs[n][1]["Q"]["u"], runs[n][1]["U"]["u"], dict(lw=1.2)) for n, lab in done]
-    ureal = denoise_real(runs_dir, real, runs[real][1])
-    curves += [("$u(s)$: PR3 map denoised", ureal["Q"], ureal["U"], dict(color="m", ls="-.", lw=1.2))]
-    edges = np.unique(np.round(np.geomspace(2, lmax + 1, 30)).astype(int))
-    ell = 0.5 * (edges[:-1] + edges[1:] - 1)
-
-    def binned(cl):
-        dl = np.arange(cl.size) * (np.arange(cl.size) + 1) * cl / (2 * np.pi)
-        return np.array([dl[a:b].mean() for a, b in zip(edges[:-1], edges[1:])])
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
-    for label, q, u, style in curves:
-        ee, bb = spec(q, u)
-        axes[0].loglog(ell, binned(ee), label=label, **style)
-        axes[1].loglog(ell, binned(bb), label=label, **style)
-    for ax, t in zip(axes, ("EE", "BB")):
-        ax.set_title(rf"{t}, $|b|>{bcut:.0f}^\circ$")
-        ax.set_xlabel(r"$\ell$")
-    axes[0].set_ylabel(r"$D_\ell=\ell(\ell+1)C_\ell/2\pi$ [$\mu$K$^2$]")
-    axes[0].legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(os.path.join(out, "spectra256.pdf"))
-    plt.close(fig)
-
-
 def evol_figure(runs, out):
     fig, axes = plt.subplots(2, 3, figsize=(12, 6), sharex=True)
     for row, f in enumerate(("Q", "U")):
@@ -218,8 +130,6 @@ def main():
     runs = {name: load(src, name) for name, _ in RUNS}
     table(runs, out)
     maps_figure(runs, out)
-    bicep_figure(runs, out, src)
-    spectra_figure(runs, out, src)
     evol_figure(runs, out)
 
 
