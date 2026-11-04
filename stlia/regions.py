@@ -51,7 +51,7 @@ def stencil(ids, nside, ksz, gauge):
 
 
 _BOUND = {}
-_BOUND_MAX = 8192
+_BOUND_MAX = 4096
 
 
 def bound_stencil(ids, nside, ksz, gauge):
@@ -73,6 +73,7 @@ def bound_stencil(ids, nside, ksz, gauge):
     self_pos = torch.arange(len(ids), device=device)[:, None, None].expand_as(pos)
     pos = torch.where(none[..., None], self_pos, pos)
     w = torch.where(none[..., None], torch.tensor([1.0, 0.0, 0.0, 0.0], device=device, dtype=w.dtype), w)
+    pos, w = pos.to(torch.int32), w.to(torch.float32)  # compact: the cache holds thousands of discs
     if len(_BOUND) >= _BOUND_MAX:
         _BOUND.pop(next(iter(_BOUND)))
     _BOUND[key] = (pos, w)
@@ -96,7 +97,7 @@ class Level:
             pos, w = bound_stencil(ids, nside, ksz, gauge)
             m = len(ids)
             rows.append((torch.arange(m * self.p, device=device)[:, None].expand(-1, 4) + off * self.p).reshape(-1))
-            cols.append((pos + off).reshape(-1))
+            cols.append((pos.long() + off).reshape(-1))
             vals.append(w.reshape(-1).float())
             off += m
         coo = torch.sparse_coo_tensor(torch.stack([torch.cat(rows), torch.cat(cols)]), torch.cat(vals),

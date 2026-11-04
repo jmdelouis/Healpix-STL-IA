@@ -7,7 +7,7 @@
 # The run goes to $R/runs/RUN_NAME (log, model.pt, train.json, eval_*.npz).
 #SBATCH -p cpu
 #SBATCH -c 32
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH -t 24:00:00
 #SBATCH -o /scratch/jmdeloui/healpix-stl-ia/runs/slurm.%j.log
 R=/scratch/jmdeloui/healpix-stl-ia

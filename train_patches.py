@@ -46,6 +46,7 @@ import argparse
 import json
 import math
 import os
+import resource
 import sys
 import time
 
@@ -292,7 +293,8 @@ def main():
             for t in TERMS:
                 hist[t].append(terms[t].item())
             print(f"step {step} loss {loss.item():.6g} " + " ".join(f"{t} {v.item():.4g}" for t, v in terms.items())
-                  + f" {(time.time() - started) / step:.3f} s/step", flush=True)
+                  + f" {(time.time() - started) / step:.3f} s/step"
+                  + f" maxrss {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20:.1f} GiB", flush=True)
         if step % a.eval_every == 0 or step == a.steps:
             evals[step] = evaluate(save=step == a.steps)
             show(step, evals[step])
