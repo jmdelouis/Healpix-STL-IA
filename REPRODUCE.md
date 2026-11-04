@@ -194,6 +194,14 @@ The reference values are those of Tables 1 and 2 of the paper. For `n256_data`, 
 - field Q: pixel error 1.09, S1 0.94 (d: 25);
 - field U: pixel error 0.93, S1 2.0 (d: 27).
 
+### Native U-Net (STL-Dev-MPI, Rust)
+
+The U-Net of `stlia` also exists in Rust in STL-Dev-MPI (`NativeUNet`, branch `claude/native-unet`), trained with everything on one GPU. Build that branch in `$R/stl_nu` (`STL=stl_nu`, as above), then time one frozen-bias step against the torch pipeline at nside 64 and 256:
+
+```bash
+STL=stl_nu sbatch $GPU_OPTS -o $RUNS/slurm.%j.log scripts/bench_native.slurm   # -> $RUNS/bench_native/*.json
+```
+
 ## 6. Figures and tables
 
 ```bash
