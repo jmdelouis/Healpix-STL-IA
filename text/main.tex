@@ -36,7 +36,8 @@
 {Scattering-transform statistics can separate a non-Gaussian sky component from noise without any clean training data: in \citet{delouis2022} the denoised \textit{Planck} dust map is the solution of an optimisation, run pixel by pixel with L-BFGS, that makes the statistics of the denoised map plus noise match those of the observed map.}
 {We replace this per-map optimisation by a network: a U-Net on the HEALPix sphere maps an observed map $d$ to a denoised map $u$ in one evaluation, and is trained with the same statistical constraint, so that no clean sky is ever used.}
 {The convolutions of the network are those of the scattering statistics: the STL/FOSCAT stencil, defined in the tangent plane of every pixel and interpolated on the HEALPix grid, with no base-face edges; its pooling is the NESTED pyramid. The loss compares the scattering covariances of $u+n_i$, for noise realisations $n_i$, with those of $d$, with the ergodic weights of the STL-Dev-MPI library, whose Rust engine gives the statistics and their exact gradient. We train on the \textit{Planck} PR3 353\,GHz $Q$ map at $\nside=64$, with white noise either uniform or with the per-pixel level of the PR3 noise simulations, and test on the $U$ map, never seen during training.}
-{On the training sky the denoised map recovers the scattering covariances of the clean sky to about one ergodic standard deviation, against up to fifty for the noisy map, and the pixel error falls to 0.4 times the noise. On the test sky the network still improves most families of statistics and reduces the pixel error to about 0.57 times the noise, but it remains far from the per-map optimum, which points to the single training sky as the main limitation. The sphere convolutions remove the face-edge artefacts of planar convolutions on the HEALPix faces.}
+{On the training sky the denoised map recovers the scattering covariances of the clean sky to about one ergodic standard deviation, against up to fifty for the noisy map, and the pixel error falls to 0.4 times the noise. On the test sky the network still improves most families of statistics and reduces the pixel error to about 0.57 times the noise, but it remains far from the per-map optimum, which points to the single training sky as the main limitation. The sphere convolutions remove the face-edge artefacts of planar convolutions on the HEALPix faces. At $
+side=256$ with draws of the FFP10 noise simulations, the auto loss brings the first-order scattering coefficients of $U$ from 27 to 2 standard deviations of the sky; the cross-statistics losses of \citet{delouis2022}, computed on the GPU or on $10^\circ$ disc patches, leave the mean of the map unconstrained and need an additional auto term.}
 {An amortised scattering denoiser is a direct, cheap replacement for the per-map optimisation; its generalisation now requires training on many skies and noise levels.}
 
 \keywords{Methods: data analysis -- Methods: statistical -- ISM: dust, extinction -- Techniques: image processing}
@@ -152,6 +153,51 @@ Table~\ref{tab:results} and Figs.~\ref{fig:maps_uniform}--\ref{fig:artefacts} su
 \paragraph{PR3 noise level.} At $\nside=64$ the PR3 noise (rms 9\,$\mu$K) is small against the dust (247\,$\mu$K for $Q$): the statistics of $d$ are already within 1.5 standard deviations of the sky, and there is little to denoise. The network still reduces the $S_1$ distance from 0.84 to 0.03 on $Q$ and from 1.5 to 1.2 on $U$, and leaves the other families at or below their level for $d$; the pixel error stays at 0.96--1.00 of the noise, as expected when the noise dominates the error only in the faint regions. With four times the PR3 level, the noise matters at high latitudes (Fig.~\ref{fig:maps_pr3}): on $Q$, $S_1$ goes from 8.8 to 0.27 and the pixel error falls to 0.78; on $U$, $S_1$ goes from 15 to 8.9 and the pixel error to 0.91. The non-uniform level is handled without change to the method: $\sigma(p)$ only enters the draws of $n_0$ and $n_i$.
 
 \paragraph{Artefacts and convolutions.}\label{sec:artefacts} With planar convolutions on the base-face images, the error maps show thin lines along the edges of the twelve faces (Fig.~\ref{fig:artefacts}, left): the finest-level details of $u-s$ are 1.36 ($Q$) and 1.16 ($U$) times larger along the edges than elsewhere. With the sphere stencil the lines disappear and the ratio is 0.99--1.04 in both gauges; the error maps no longer show the HEALPix faces, and the cosmo gauge shows no seam at the equator where its orientation flips. On the statistics the three convolutions are equivalent on the training sky. On the test sky the sphere stencil is slightly worse than the face images with this single-sky training (pixel error 0.57 against 0.55 with uniform noise, 0.91 against 0.84 with $4\,\sigma(p)$), and the cosmo gauge is slightly better than the $\phi$ gauge on $S_1$ and $S_2$ (25 and 2.3 standard deviations against 28 and 3.1) but worse on $S_3$ (0.98 against 0.75). We do not read these differences of generalisation, obtained with one training sky and one seed, as significant. The edge ratio is 0.89--0.97 for the PR3 runs, whose error follows the non-uniform noise level; we have not traced the origin of this small deficit.
+
+\section{Higher resolution and realistic noise}\label{sec:n256}
+
+\paragraph{Setting.} We move to $\nside=256$ with draws of the FFP10 noise simulations themselves instead of white noise: every training step adds to the sky one of the simulations 10--49 of the full-mission map, and the evaluation uses simulations 0--9. Their rms is 31.6 ($Q$) and 32.8\,$\mu$K ($U$) at this resolution, and they carry the stripes and large-scale correlations of the PR3 noise. The two half-mission simulations of the same realisation give the half-mission observations $d_1$ and $d_2$. The full-sky network has six levels ($\nside=256$ to 8, $2.4\times10^6$ parameters), the statistics $J=7$ scales (5882 coefficients), and a step takes 1\,s (auto loss) to 2.8\,s (cross losses) on one NVIDIA A100.
+
+\paragraph{Losses of \citet{delouis2022}.} Besides the auto loss of Eq.~\eqref{eq:loss}, we use the three cross-statistics terms of \citet{delouis2022}, each a reduced $\chi^2$ of the same form, with $\tilde n$ fresh noise draws and $T$ the \textit{Planck} 857\,GHz intensity map as dust template:
+\begin{align}
+  L_1&:\ \Phi(d_1,d_2)\ \text{vs}\ \langle\Phi(u+\tilde n_1,u+\tilde n_2)\rangle, \\
+  L_2&:\ \Phi(d,u)\ \text{vs}\ \langle\Phi(u+\tilde n,u)\rangle, \\
+  L_3&:\ \Phi(T,d)\ \text{vs}\ \langle\Phi(T,u+\tilde n)\rangle,
+\end{align}
+where $\Phi(a,b)$ are the cross scattering covariances of STL-Dev-MPI, computed on the GPU. The cross statistics of the engine have no mean or variance coefficient: they constrain $S_1$ to $S_4$ only.
+
+\paragraph{Training on discs.} The cost of full-sky statistics grows with $\nside^2$. As an alternative, we train on disc patches: every step draws 16 centres among the pixel centres of $\nside=8$, takes all pixels within $10^\circ$ of each centre, runs the network on the discs (three levels, 32, 64 and 96 channels, $3.7\times10^5$ parameters; the stencil of every level is bound to the pixels of the disc) and computes the three cross losses on the discs with $J=4$, averaged within $4^\circ$ of the centre, where the network on the disc equals the network on the full sky. This run used the CPU implementation of the disc statistics (3.3\,s per step on 32 cores); a GPU version is in development.
+
+\begin{table*}
+  \caption{Evaluation at $\nside=256$ with FFP10 noise (3000 steps). err./$\sigma_n$: pixel rms of $u-s$ over the noise rms. Other columns: rms of $(\Phi(u)-\Phi(s))/\sigma$ over the family, in brackets the same for $d$; the statistics of the evaluation have $J=7$ for the full-sky runs and $J=4$ for the patch run, hence the different values for $d$. $^\dagger$: run in progress, last evaluation (step in brackets).}
+  \label{tab:n256}
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{llccccccc}
+    \hline\hline
+    Run & Sky & err./$\sigma_n$ & mean & var & $S_1$ & $S_2$ & $S_3$ & $S_4$ \\
+    \hline
+    \csname @@input\endcsname figures/results256_table.tex
+    \hline
+  \end{tabular}
+\end{table*}
+
+\begin{figure*}
+  \centering
+  \figfile{maps256.pdf}{\textwidth}
+  \caption{$\nside=256$, FFP10 noise. Top: training sky $Q$; bottom: test sky $U$. From left to right: clean sky, noise $d-s$, and error $u-s$ of the full-sky run with the auto loss and of the patch run with the cross losses (same scale as the noise).}
+  \label{fig:maps256}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{evol256.pdf}{\textwidth}
+  \caption{Evaluation during training at $\nside=256$: pixel error over the noise, and distance of the mean and of $S_1$ of $u$ to the clean sky in ergodic standard deviations (dotted: $d$).}
+  \label{fig:evol256}
+\end{figure*}
+
+\paragraph{Results.} Table~\ref{tab:n256} and Figs.~\ref{fig:maps256}--\ref{fig:evol256} give the results. With the auto loss alone, the $S_1$ distance falls from 25 to 0.94 standard deviations on $Q$ and from 27 to 2.0 on the test sky $U$, and the other families are at or below their level for $d$; the pixel error is 1.09 ($Q$) and 0.93 ($U$) of the noise, so the statistics are corrected without a gain in pixel error at this signal-to-noise ratio. The cross losses reach a similar or better $S_1$ (0.6 on $Q$), but the mean of $u$ drifts away from that of the sky, to about 60 standard deviations, and the pixel error rises above the noise (1.17 on $Q$): the mean is not constrained by the cross statistics, and the network uses this freedom. On discs the drift is smaller (7 standard deviations) but $S_1$ only reaches 11--12, the pixel error is 1.22--1.23, and the error map shows a stripe along the Galactic plane (Fig.~\ref{fig:maps256}, right): with $J=4$ on $10^\circ$ discs neither the large scales nor the bright plane are constrained enough. The next runs add an auto term on the mean and variance to the cross losses.
 
 \section{Discussion and next steps}
 
