@@ -27,6 +27,12 @@ FAMILIES = ("mean", "var", "S1", "S2", "S3", "S4")
 
 
 class StatsFunction(torch.autograd.Function):
+    """Autograd function of the STL engine: auto statistics of a batch of maps.
+
+    Forward: ``engine.forward`` of `x` `[B, npix]` -> `[B, ncoeff, 2]` (real and
+    imaginary parts, float64).  Backward: ``engine.vjp`` with the same
+    `generation`, the exact gradient of the pyramidal reverse sweep."""
+
     @staticmethod
     def forward(ctx, x, engine, generation):
         values, _ = engine.forward(x.detach().cpu().numpy(), generation=generation)
@@ -54,6 +60,9 @@ class Stats:
 
 
 def native_pixels(plan, nside):
+    """Number of pixels of the pyramid level where each coefficient of `plan`
+    is computed (`12 (nside / 2^native_dg)^2`): the `N_pix` of the ergodic
+    variance."""
     return np.array([12 * (nside >> c["native_dg"]) ** 2 for c in plan], dtype=np.float64)
 
 
@@ -63,6 +72,22 @@ def as_real(values):
 
 
 class DenoiseLoss:
+    """Reduced chi^2 between statistics, with ergodic weights.
+
+    For coefficient `c`, `sigma_c^2 = V_c / N_pix,c`, the spatial variance of
+    the terms it averages over the pixels of its level; the loss is
+    `sum_c |mean_i s_ic - t_c|^2 / sigma_c^2 / N_c`.  Coefficients with a zero
+    variance get the largest weight.
+
+    Parameters
+    ----------
+    plan : list of dict
+        Coefficient plan of the engine (keys ``family``, ``native_dg``).
+    nside : int
+        Resolution of the maps.
+    device : str or torch.device
+        Device of the weights."""
+
     def __init__(self, plan, nside, device="cpu"):
         self.n = len(plan)
         self.npix = torch.as_tensor(native_pixels(plan, nside), device=device)

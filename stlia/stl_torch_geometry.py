@@ -69,12 +69,14 @@ def _spread_bits(v):
 
 
 def nest2xyf(pix, order):
+    """NESTED pixel ids -> (ix, iy, face) at `order` (nside = 2^order)."""
     face = pix >> (2 * order)
     local = pix & ((1 << (2 * order)) - 1)
     return _compress_bits(local), _compress_bits(local >> 1), face
 
 
 def xyf2nest(ix, iy, face, order):
+    """(ix, iy, face) -> NESTED pixel ids at `order`."""
     return (face << (2 * order)) + _spread_bits(ix) + (_spread_bits(iy) << 1)
 
 
@@ -361,6 +363,8 @@ def rotation_matrices(theta, phi, G, gauge_type, dtype):
 
 
 def local_kernel_grid(kernel_sz, nside, device, dtype):
+    """Unit vectors `[k^2, 3]` of the `k x k` kernel taps in the tangent plane
+    at the north pole, with the pixel size `sqrt(4 pi / npix)` as spacing."""
     grid = np.arange(kernel_sz) - kernel_sz // 2
     xx, yy = np.meshgrid(grid, grid)
     alpha_pix = np.sqrt(4 * np.pi / (12 * nside**2))

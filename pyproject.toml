@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=80", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "healpix-stl-ia"
+dynamic = ["version"]
+description = "Amortised scattering denoising of HEALPix maps: a spherical U-Net trained on STL-Dev-MPI scattering covariances"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+  { name = "Jean-Marc Delouis" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+  "numpy",
+  "scipy",
+  "torch",
+  "healpy",
+  "matplotlib",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+docs = [
+  "sphinx>=8",
+  "pydata-sphinx-theme",
+  "myst-parser",
+  "sphinx-design",
+  "sphinx-copybutton",
+  "sphinx-argparse",
+]
+
+[project.scripts]
+stlia-train-denoise = "stlia.train_denoise:main"
+stlia-train-patches = "stlia.train_patches:main"
+
+[project.urls]
+Homepage = "https://jmdelouis.github.io/Healpix-STL-IA/"
+Documentation = "https://jmdelouis.github.io/Healpix-STL-IA/"
+Repository = "https://github.com/jmdelouis/Healpix-STL-IA"
+
+[tool.setuptools.packages.find]
+include = ["stlia", "stlia.*"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore:Sparse CSR tensor support is in beta state:UserWarning"]
+markers = [
+  "stl: needs the STL-Dev-MPI engine (stl_port.native and STL_NATIVE_LIBRARY); skipped otherwise",
+]

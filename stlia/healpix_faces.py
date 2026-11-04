@@ -47,6 +47,7 @@ NB_SWAP = np.array([[0, 0, 3], [0, 0, 6], [0, 0, 0], [0, 0, 5], [0, 0, 0],
 
 
 def nside_of(npix):
+    """nside of a map of `npix` pixels."""
     nside = int(round(np.sqrt(npix / 12)))
     assert 12 * nside * nside == npix, f"{npix} pixels is not a HEALPix map"
     return nside
@@ -61,6 +62,7 @@ def _spread_bits(v):
 
 
 def xyf2nest(nside, ix, iy, face):
+    """(ix, iy, face) -> NESTED pixel ids (numpy)."""
     return np.asarray(face, dtype=np.int64) * nside * nside + (_spread_bits(ix) | (_spread_bits(iy) << 1))
 
 

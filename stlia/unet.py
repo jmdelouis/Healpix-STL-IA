@@ -104,10 +104,15 @@ class PixelNorm(nn.Module):
 
 
 def make_norm(kind, c):
+    """Normalisation layer: ``"group"`` (GroupNorm over the map) or ``"pixel"``
+    (:class:`PixelNorm`, over the channels of every pixel)."""
     return PixelNorm(c) if kind == "pixel" else nn.GroupNorm(min(8, c), c)
 
 
 class SphereBlock(nn.Module):
+    """Two sphere convolutions, each followed by a normalisation and a leaky
+    ReLU: the block of every level of the encoder and of the decoder."""
+
     def __init__(self, cin, cout, ksz, slope, norm="group"):
         super().__init__()
         self.c1, self.c2 = SphereConv(cin, cout, ksz), SphereConv(cout, cout, ksz)
@@ -153,11 +158,39 @@ def face_block(pad, cin, cout, slope):
 
 
 def default_channels(levels):
+    """Default channels per level: 32, 64, 96, 128, then 128."""
     return [32, 64, 96, 128, 128, 128, 128][:levels]
 
 
 class UNet(nn.Module):
-    """`levels` resolutions from `nside` down to `nside / 2^(levels-1)`."""
+    """Spherical U-Net on the HEALPix NESTED grid, d -> u = d - scale * r(d / scale).
+
+    Parameters
+    ----------
+    nside : int
+        Resolution of the input maps.
+    levels : int
+        Resolutions of the pyramid, from `nside` down to `nside / 2^(levels-1)`.
+    channels : list of int, optional
+        Channels per level (default :func:`default_channels`).
+    slope : float
+        Negative slope of the leaky ReLU.
+    conv : {"sphere", "faces"}
+        STL stencil on the sphere, or planar convolutions on the base faces
+        (first prototype, kept for comparison).
+    gauge : {"phi", "cosmo"}
+        Orientation of the kernels on the sphere.
+    ksz : int
+        Kernel size (`ksz x ksz` taps).
+    norm : {"group", "pixel"}
+        Normalisation; "pixel" is required to train on patches.
+    scale : float, optional
+        Fixed input scale; None uses the std of every map.
+
+    Notes
+    -----
+    The last layer starts at zero: an untrained network is the identity.
+    """
 
     def __init__(self, nside, levels=4, channels=None, slope=0.2, conv="sphere", gauge="phi", ksz=3, norm="group",
                  scale=None):
@@ -196,10 +229,12 @@ class UNet(nn.Module):
         nn.init.zeros_(self.head.bias)
 
     def config(self):
+        """Constructor arguments, saved with the weights in ``model.pt``."""
         return {"nside": self.nside, "levels": self.levels, "channels": self.channels, "conv": self.conv,
                 "gauge": self.gauge, "ksz": self.ksz, "norm": self.norm, "scale": self.scale}
 
     def input_scale(self, d):
+        """Scale of the input: the fixed `scale`, or the std of `d`."""
         return d.std() if self.scale is None else torch.as_tensor(self.scale, dtype=d.dtype, device=d.device)
 
     def forward_patches(self, d, patches):
@@ -259,6 +294,15 @@ class UNet(nn.Module):
 
 
 def load(path, device):
+    """Load a network saved by the training commands.
+
+    Returns
+    -------
+    net : UNet
+        The network, in evaluation mode, on `device`.
+    checkpoint : dict
+        The saved dictionary: weights, :meth:`UNet.config`, and the run
+        metadata (``j``, ``noise_rms``)."""
     ck = torch.load(path, map_location=device, weights_only=False)
     net = UNet(ck["nside"], ck["levels"], ck["channels"], conv=ck.get("conv", "faces"),
                gauge=ck.get("gauge", "phi"), ksz=ck.get("ksz", 3), norm=ck.get("norm", "group"),

@@ -1,0 +1,82 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (CPU torch)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ".[docs]"
+      - name: Build (warnings are errors)
+        run: sphinx-build -W --keep-going -b html docs docs/_build
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/_build/
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build-docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  docs-updated:
+    # A change of the code must come with a change of the documentation or of
+    # the changelog (CONTRIBUTING.md); "[no-docs]" in the commit message or in
+    # the pull-request title opts out.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Code changes need docs changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s\n%s\n' "$TITLE" "$MESSAGE" | grep -q '\[no-docs\]'; then echo "opted out with [no-docs]"; exit 0; fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "no base commit to compare with"; exit 0
+          fi
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          echo "$changed"
+          code=$(echo "$changed" | grep -E '^(stlia/|scripts/|train_denoise\.py|train_patches\.py|pyproject\.toml)' || true)
+          docs=$(echo "$changed" | grep -E '^(docs/|REPRODUCE\.md|CHANGELOG\.md|README\.md)' || true)
+          if [ -n "$code" ] && [ -z "$docs" ]; then
+            echo "::error::code changed without any change of docs/, REPRODUCE.md, README.md or CHANGELOG.md:"
+            echo "$code"
+            exit 1
+          fi
+          echo "ok"

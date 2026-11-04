@@ -1,26 +1,50 @@
-# Healpix-STL-IA
+# healpix-stl-ia
 
-Amortized scattering-based component separation on the sphere.
+[![Test](https://github.com/jmdelouis/Healpix-STL-IA/actions/workflows/test.yml/badge.svg)](https://github.com/jmdelouis/Healpix-STL-IA/actions/workflows/test.yml)
+[![Docs](https://github.com/jmdelouis/Healpix-STL-IA/actions/workflows/docs.yml/badge.svg)](https://jmdelouis.github.io/Healpix-STL-IA/)
 
-A HEALPix U-Net / autoencoder maps an observed map `d` to a clean map `u = f_θ(d)`.
-It is trained without ground truth: the loss only compares scattering statistics
-Φ computed with [STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI)
-(e.g. Φ(u + n_i) vs Φ(d)), following the denoising setup of Delouis et al. (2022)
-but replacing the per-map L-BFGS optimisation by a trained network.
+**Amortised scattering denoising of full-sky HEALPix maps.**
 
-- `text/` : A&A paper (synchronised with Overleaf via `git subtree`)
-- data and heavy computations live on the HPC (`$SCRATCH`), not in this repository
-- **`REPRODUCE.md`**: step-by-step recipe to rebuild every run, figure and table on any GPU machine
+A U-Net on the sphere maps an observed map `d` to a denoised map `u = f_θ(d)`. It is trained without any clean sky: the loss compares only the scattering covariances Φ computed by [STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI) (for example Φ(u + n_i) against Φ(d)), with the losses of Delouis et al. (2022, A&A 668, A122). The per-map L-BFGS optimisation of that paper becomes one network evaluation.
 
-## Prototype (`train_denoise.py`)
+- **Convolutions on the sphere**: the STL/FOSCAT stencil, with no base-face edges.
+- **Full-sky or disc-patch training**, with the disc statistics on CPU or GPU.
+- **Mock data** (FFP10 noise draws) or **the Planck PR3 maps themselves** (`--real`).
 
-- `stlia/unet.py`: U-Net on the 12 HEALPix base faces (NESTED pyramid = 2x2 pooling, face-aware padding), `u = d - r(d)` with `r` initialised to zero.
-- `stlia/stl_torch.py`: STL-Dev-MPI scattering covariance (`stl-bridge` `NativeEngine`) as a torch autograd function, and the denoising loss
-  `sum_c w_c |mean_i S_c(u + n_i) - S_c(d)|^2` (ergodic weights).
-- `scripts/prepare_planck.py`: Planck PR3 353 GHz map -> NESTED I/Q/U `.npy` at nside 256/128/64 (run on the HPC).
-- Demo protocol: white noise, train on Q (fresh noise each step), test on U.
+**Documentation: <https://jmdelouis.github.io/Healpix-STL-IA/>**: installation, method, user guide, command line, API.
 
+## Install
+
+```bash
+pip install torch                       # the CUDA build of your machine
+pip install "healpix-stl-ia @ git+https://github.com/jmdelouis/Healpix-STL-IA"
 ```
-source scripts/garoupe_env.sh
-$PY train_denoise.py --data $G/data --out $G/runs/n64 --nside 64 --steps 3000
+
+Training also needs the STL-Dev-MPI engine (Rust, built from source). See the [installation page](https://jmdelouis.github.io/Healpix-STL-IA/installation.html).
+
+```bash
+stlia-train-denoise --data maps --out runs/n64 --nside 64 --noise uniform --loss data=1
+stlia-train-denoise --data maps --out runs/real256 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1
+stlia-train-patches --data maps --out runs/p256 --nside 256 --stl-backend gpu --device cuda:0
 ```
+
+## Repository
+
+| path | content |
+|---|---|
+| `stlia/` | the package: network (`unet`), losses (`stl_torch`), disc patches (`regions`), training (`train_denoise`, `train_patches`) |
+| `scripts/` | data preparation, figures, and the HPC job scripts |
+| `tests/` | unit tests (`pytest`); the tests marked `stl` need the engine |
+| `docs/` | the documentation (Sphinx, MyST); API and command-line pages are generated from the code |
+| `text/` | the A&A paper, synchronised with Overleaf |
+| `REPRODUCE.md` | step-by-step recipe for every run, figure and table of the paper, on any GPU machine |
+
+Data and heavy computations live on an HPC work directory, not in this repository.
+
+## Contributing
+
+Every code change comes with its documentation and a `CHANGELOG.md` entry, and the CI checks this: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Apache-2.0.

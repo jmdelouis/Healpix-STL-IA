@@ -15,3 +15,5 @@ text/*.pdf
 text/*.fdb_latexmk
 text/*.fls
 text/*.synctex.gz
+docs/_build/
+docs/generated/
