@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.fits
+*.npy
+*.npz
+*.pt
+data/
+runs/
+text/*.aux
+text/*.log
+text/*.bbl
+text/*.blg
+text/*.out
+text/*.pdf
