@@ -23,6 +23,7 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 - **Reproduction recipe.** `REPRODUCE.md` and machine-independent scripts: `scripts/env.sh`, `download_planck.sh`, `prepare_data.slurm`, `build_bridge.slurm`, `reproduce.sh`, `train_gpu.slurm`, `train_cpu.slurm`, `train_patches_gpu.slurm`.
 
 ### Changed
+- `scripts/make_figures_real.py`: the full-sky figure shows the data `d` next to `u` and `d - u` (paper: figure caption updated).
 - **Noise-bias wording.** The paper, the method page and the docstring of the L-BFGS reference now say that no noise bias is frozen: the statistics of `u + n_i` are recomputed at the current `u` at every evaluation. They said, wrongly, that the biases were re-estimated between batches of iterations as in Delouis et al. (2022).
 - **Paper.** New section *Denoising the PR3 maps*: the network run `r256_dl123`, with the BICEP2 field, the EE/BB spectra against `d1 x d2` and the full-sky maps.
 - The STL-Dev-MPI engine is imported when a training starts, so the package imports without it.

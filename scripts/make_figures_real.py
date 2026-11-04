@@ -51,13 +51,15 @@ def main():
     half = {f: 0.5 * (hm[1][f] - hm[2][f]) for f in ev}
     res = {f: d[f] - u[f] for f in ev}
 
-    # Full sky: u and the residual d - u.
-    fig = plt.figure(figsize=(12, 6.4))
+    # Full sky: the data d, the denoised u (same histogram-equalised colours) and the residual d - u.
+    fig = plt.figure(figsize=(18, 7.4))
     for row, f in enumerate(("Q", "U")):
-        hp.mollview(u[f], nest=True, fig=fig.number, sub=(2, 2, 2 * row + 1), title=f"$u$ ({f})", norm="hist",
+        hp.mollview(d[f], nest=True, fig=fig.number, sub=(2, 3, 3 * row + 1), title=f"PR3 map $d$ ({f})", norm="hist",
+                    cmap="RdBu_r", notext=True, unit=r"$\mu$K")
+        hp.mollview(u[f], nest=True, fig=fig.number, sub=(2, 3, 3 * row + 2), title=f"denoised $u$ ({f})", norm="hist",
                     cmap="RdBu_r", notext=True, unit=r"$\mu$K")
         v = np.percentile(np.abs(half[f]), 99)
-        hp.mollview(res[f], nest=True, fig=fig.number, sub=(2, 2, 2 * row + 2), title=f"$d-u$ ({f})",
+        hp.mollview(res[f], nest=True, fig=fig.number, sub=(2, 3, 3 * row + 3), title=f"$d-u$ ({f})",
                     min=-v, max=v, cmap="RdBu_r", notext=True, unit=r"$\mu$K")
     fig.savefig(os.path.join(a.out, "real_maps.pdf"), bbox_inches="tight")
     plt.close(fig)
