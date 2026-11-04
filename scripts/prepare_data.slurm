@@ -3,7 +3,7 @@
 # to nside 256/128/64 (NESTED .npy in uK_CMB, parent means) into $R/data/maps.
 # About 3 h on 4 cores, 24 GB of memory, 15 GB on disk.
 #
-#   sbatch $CPU_OPTS -o $R/runs/slurm.%j.log scripts/prepare_data.slurm    (or: bash scripts/prepare_data.slurm)
+#   sbatch $CPU_OPTS -o $RUNS/slurm.%j.log scripts/prepare_data.slurm    (or: bash scripts/prepare_data.slurm)
 #
 # The per-pixel std of `--noise pr3white` (nside 64 runs) is that of the
 # simulations mc 0-9: noise_std.py is run on the 50 simulations (every

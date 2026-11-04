@@ -9,7 +9,8 @@
 #   $R/$STL/src     the STL-Dev-MPI checkout (STL, default `stl`)
 #   $R/$STL/target  its cargo build (libstl_bridge.so)
 #   $R/data/planck  the PLA downloads, $R/data/maps the degraded maps
-#   $R/runs         one directory per run
+#   $RUNS           one directory per run (RUNS, default $R/runs: set it
+#                   elsewhere when the work file system is full)
 # SITE_ENV: a file sourced first, for what the site needs (modules, rustup,
 #   the CUDA runtime); see scripts/hpc_env.sh for an example.
 # PY: python 3.10+ with torch (CUDA build), numpy, scipy, healpy, matplotlib
@@ -22,11 +23,12 @@
 export R
 [ -n "$SITE_ENV" ] && source "$SITE_ENV"
 export STL=${STL:-stl}
+export RUNS=${RUNS:-$R/runs}
 export G=$R/$STL
 export CARGO_TARGET_DIR=$G/target
 export STL_NATIVE_LIBRARY=$G/target/release/libstl_bridge.so  # follows STL, also when re-sourced in a job
 export PYTHONPATH=$R/src:$G/src/python/stl_ensemble${PYTHONPATH:+:$PYTHONPATH}
-export MPLCONFIGDIR=${MPLCONFIGDIR:-$R/runs/.mpl}
+export MPLCONFIGDIR=${MPLCONFIGDIR:-$RUNS/.mpl}
 export PY=${PY:-python3}
 # Slurm options of the GPU (one GPU with >= 40 GB) and CPU (32 cores, 128 GB)
 # jobs; empty when the jobs are run with bash on the current machine.

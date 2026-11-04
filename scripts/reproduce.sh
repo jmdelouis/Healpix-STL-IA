@@ -4,20 +4,20 @@
 #
 #   bash scripts/reproduce.sh runs       submit every run (Slurm), or run them
 #                                        one after the other when GPU_OPTS is empty
-#   bash scripts/reproduce.sh figures    figures and tables into $R/runs/figs*
+#   bash scripts/reproduce.sh figures    figures and tables into $RUNS/figs*
 #
 # The runs are independent: one GPU (>= 40 GB for nside 256) or 32 CPU cores each.
 : "${R:?source scripts/env.sh (or a site file) first}"
 source $R/src/scripts/env.sh
 set -e
 cd $R/src
-mkdir -p $R/runs
+mkdir -p $RUNS
 gpu() {
-    if [ -n "$GPU_OPTS" ]; then sbatch $GPU_OPTS -J "$1" -o $R/runs/slurm.%j.log scripts/train_gpu.slurm "$@"
+    if [ -n "$GPU_OPTS" ]; then sbatch $GPU_OPTS -J "$1" -o $RUNS/slurm.%j.log scripts/train_gpu.slurm "$@"
     else bash scripts/train_gpu.slurm "$@"; fi
 }
 cpu() {
-    if [ -n "$CPU_OPTS" ]; then sbatch $CPU_OPTS -J "$1" -o $R/runs/slurm.%j.log scripts/train_cpu.slurm "$@"
+    if [ -n "$CPU_OPTS" ]; then sbatch $CPU_OPTS -J "$1" -o $RUNS/slurm.%j.log scripts/train_cpu.slurm "$@"
     else bash scripts/train_cpu.slurm "$@"; fi
 }
 common="--steps 3000 --lr 1e-3 --seed 0 --realizations 4 --train-field Q --test-field U --log-every 50 --eval-every 500"
@@ -53,14 +53,14 @@ runs)
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
-    $PY scripts/make_figures.py $R/runs $R/runs/figs64
-    $PY scripts/make_figures256.py $R/runs $R/runs/figs256
-    $PY scripts/make_figures_real.py $R/runs/r256_dl123 $R/data/maps $R/runs/figs_real
-    $PY scripts/make_figures_real.py $R/runs/l256_dl123 $R/data/maps $R/runs/figs_lbfgs
+    $PY scripts/make_figures.py $RUNS $RUNS/figs64
+    $PY scripts/make_figures256.py $RUNS $RUNS/figs256
+    $PY scripts/make_figures_real.py $RUNS/r256_dl123 $R/data/maps $RUNS/figs_real
+    $PY scripts/make_figures_real.py $RUNS/l256_dl123 $R/data/maps $RUNS/figs_lbfgs
     for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_fz_cl857_mk l256_fz_mk; do
-        $PY scripts/make_figures_real.py $R/runs/$r $R/data/maps $R/runs/figs_$r
+        $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
-    ls $R/runs/figs64 $R/runs/figs256 $R/runs/figs_real
+    ls $RUNS/figs64 $RUNS/figs256 $RUNS/figs_real
     ;;
 *)
     echo "usage: bash scripts/reproduce.sh runs | figures"; exit 1

@@ -5,6 +5,7 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 ## Unreleased
 
 ### Fixed
+- **Run directory.** The scripts write the runs and the Slurm logs to `$RUNS` (default `$R/runs`), so that they can go to another file system when the work one is full. Documentation updated: `REPRODUCE.md` (environment, pitfalls).
 - **Checkpoints.** `stlia-train-denoise` writes `model.pt` to a temporary file and renames it. A failed write, such as a full file system, now leaves the previous checkpoint intact instead of a truncated file. No documentation change: the outputs are the same.
 
 ### Added

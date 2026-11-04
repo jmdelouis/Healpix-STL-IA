@@ -65,6 +65,7 @@ git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
 | `R` | the work directory (required) |
 | `SITE_ENV` | a file sourced first: modules, rustup, the CUDA runtime |
 | `PY` | the Python interpreter (default `python3`) |
+| `RUNS` | where the runs and the Slurm logs go (default `$R/runs`) |
 | `CUDARC_CUDA_VERSION` | driver CUDA version, e.g. `13000`, `12080`, `11040`; read it from `nvidia-smi` |
 | `GPU_OPTS`, `CPU_OPTS` | `sbatch` options of a 1-GPU job and of a 32-core job; leave empty to run with `bash` |
 
@@ -202,5 +203,6 @@ This writes `$R/runs/figs64` (Figs. 1-6 and `results_table.tex`), `$R/runs/figs2
 ## Pitfalls met while making the paper
 
 - **Line endings.** A script edited on Windows and copied with CRLF line endings breaks bash (`$'\r': command not found`). Fix it with `sed -i 's/\r$//' scripts/*.sh scripts/*.slurm`.
+- **Full work file system.** When the file system of `$R` is full, `torch.save` fails (`iostream error`), the run stops at its first checkpoint, and the Slurm log stays empty. Check with `dd if=/dev/zero of=$R/x bs=1M count=100 conv=fsync`. Then set `RUNS` to another file system (the outputs are about 40 MB per run). Since this happened, `model.pt` is written to a temporary file and renamed.
 - **GPU memory.** The GPU disc engine reserves half of the free GPU memory for its geometry cache when it starts. On a GPU shared with the network, give `--cache-bytes` explicitly.
 - **Mock sky.** In Sects. 3-4 the "clean sky" `s` of the evaluation is the PR3 map itself, which contains the Planck noise. Pixel errors and maps there compare losses, not the quality of a denoised dust map. The PR3 maps denoised (`--real`) are the actual test.
