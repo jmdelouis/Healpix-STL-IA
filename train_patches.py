@@ -12,7 +12,8 @@ missions, DIR/planck353_{noise,noisehm1,noisehm2}_{field}_n{nside}_mc{k}.npy,
 the same realisation k for the three, with one random sign); T is the
 857 GHz intensity map (DIR/planck857_I_n{nside}.npy).
 
-Every step draws `--patches` disc centres at random among the pixels, an
+Every step draws `--patches` disc centres at random among the pixel
+centres of `--centre-nside` (cached disc geometries), an
 observation (simulation of `--sims-train`), and `--realizations` noise
 triples (ñ, ñ1, ñ2) from other training simulations; the network runs on the
 discs of radius `--radius` (`stlia.regions.Patches`), and the losses use the
@@ -112,6 +113,10 @@ def main():
     p.add_argument("--radius", type=float, default=10.0, help="disc radius [deg]")
     p.add_argument("--core", type=float, default=4.0, help="averaging radius of the statistics [deg]")
     p.add_argument("--patches", type=int, default=16)
+    p.add_argument("--centre-nside", type=int, default=16,
+                   help="disc centres drawn among the pixel centres of this nside (0: every pixel); "
+                        "a finite set lets the engine reuse its cached disc geometries")
+    p.add_argument("--geometry-cache", type=int, default=4096)
     p.add_argument("--realizations", type=int, default=4)
     p.add_argument("--train-field", default="Q")
     p.add_argument("--test-field", default="U")
@@ -163,7 +168,15 @@ def main():
             cache[(f, k)] = noise(f, k)
         return cache[(f, k)]
 
-    pe = PatchEngine(a.nside, a.j, cross=True, threads=a.threads)
+    pe = PatchEngine(a.nside, a.j, cross=True, threads=a.threads, cache=a.geometry_cache)
+    # Candidate centres: the pixel of `nside` that holds each pixel centre of `centre_nside`.
+    if a.centre_nside:
+        from stlia.regions import pixel_vectors
+        fine, coarse = pixel_vectors(a.nside, "cpu"), pixel_vectors(a.centre_nside, "cpu")
+        candidates = torch.argmax(coarse @ fine.T, 1).numpy() if a.nside <= 128 else np.array(
+            [int(torch.argmax(fine @ v)) for v in coarse])
+    else:
+        candidates = np.arange(npix)
     run = {"engine": pe, "box": {}, "generation": 0, "radius": a.radius, "core": a.core}
     ncoeff = pe.ncoeff
     channels = [int(c) for c in a.channels.split(",")]
@@ -223,7 +236,7 @@ def main():
         v, var = full.forward(m.detach().cpu().numpy()[None], moments=True)
         return torch.as_tensor(as_real(v[0]), device=dev), torch.as_tensor(var[0], device=dev)
 
-    eval_centres = rng.integers(0, npix, a.patches)
+    eval_centres = rng.choice(candidates, a.patches, replace=False)
 
     def evaluate(save=False):
         net.eval()
@@ -265,7 +278,7 @@ def main():
     show(0, evals[0])
     started = time.time()
     for step in range(1, a.steps + 1):
-        centres = rng.integers(0, npix, a.patches)
+        centres = rng.choice(candidates, a.patches, replace=False)
         k, ks, signs = draw(train_ids)
         terms, _, _ = losses(a.train_field, centres, k, ks, signs)
         loss = sum(weights[t] * v for t, v in terms.items())

@@ -50,6 +50,35 @@ def stencil(ids, nside, ksz, gauge):
     return nb.view(-1, p, 4).to(ids.device), w.view(-1, p, 4).to(ids.device, torch.float64)
 
 
+_BOUND = {}
+_BOUND_MAX = 8192
+
+
+def bound_stencil(ids, nside, ksz, gauge):
+    """Stencil of the sorted NESTED ids `[m]` bound to them: (`[m, k^2, 4]`
+    positions in `ids`, renormalised weights).  Cached by disc (the training
+    draws its centres from a finite set)."""
+    key = (nside, ksz, gauge, ids.numel(), int(ids[0]), int(ids[-1]), int(ids.sum()), str(ids.device))
+    if key in _BOUND:
+        return _BOUND[key]
+    device = ids.device
+    nb, w = stencil(ids, nside, ksz, gauge)
+    pos = torch.searchsorted(ids, nb.reshape(-1)).view_as(nb).clamp(max=len(ids) - 1)
+    present = ids[pos] == nb
+    w = w * present
+    tot = w.sum(-1, keepdim=True)
+    none = tot[..., 0] == 0
+    w = torch.where(tot > 0, w / tot.clamp_min(1e-300), w)
+    # a tap with none of its pixels present reads the pixel itself
+    self_pos = torch.arange(len(ids), device=device)[:, None, None].expand_as(pos)
+    pos = torch.where(none[..., None], self_pos, pos)
+    w = torch.where(none[..., None], torch.tensor([1.0, 0.0, 0.0, 0.0], device=device, dtype=w.dtype), w)
+    if len(_BOUND) >= _BOUND_MAX:
+        _BOUND.pop(next(iter(_BOUND)))
+    _BOUND[key] = (pos, w)
+    return pos, w
+
+
 class Level:
     """One resolution of a batch of patches: the pixels (flat), the gather
     matrix of the stencil and its transpose, and the map to the parents."""
@@ -64,17 +93,7 @@ class Level:
         rows, cols, vals = [], [], []
         off = 0
         for ids in parts:
-            nb, w = stencil(ids, nside, ksz, gauge)
-            pos = torch.searchsorted(ids, nb.reshape(-1)).view_as(nb).clamp(max=len(ids) - 1)
-            present = ids[pos] == nb
-            w = w * present
-            tot = w.sum(-1, keepdim=True)
-            none = tot[..., 0] == 0
-            w = torch.where(tot > 0, w / tot.clamp_min(1e-300), w)
-            # a tap with none of its pixels present reads the pixel itself
-            self_pos = torch.arange(len(ids), device=device)[:, None, None].expand_as(pos)
-            pos = torch.where(none[..., None], self_pos, pos)
-            w = torch.where(none[..., None], torch.tensor([1.0, 0.0, 0.0, 0.0], device=device, dtype=w.dtype), w)
+            pos, w = bound_stencil(ids, nside, ksz, gauge)
             m = len(ids)
             rows.append((torch.arange(m * self.p, device=device)[:, None].expand(-1, 4) + off * self.p).reshape(-1))
             cols.append((pos + off).reshape(-1))
