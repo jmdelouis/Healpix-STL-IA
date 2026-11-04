@@ -72,10 +72,20 @@ stlia-train-denoise --data maps --out runs/real256_fz --nside 256 --real     --l
 stlia-train-denoise --data maps --out runs/lbfgs256_fz --nside 256 --real     --loss data=1,l1=1,l2=1,l3=1,cl=1 --bias frozen --optimizer lbfgs
 ```
 
+## A joint (Q, U) network
+
+With `--joint`, one network denoises Q and U together (`UNet(maps=2)`): both maps are its input and its output, and every step trains both. The scattering terms are those of each field, summed. With `--cl-spin 2`, the spectrum loss is on the EE and BB cross spectra of the half missions instead of the spectra of Q and U:
+
+```bash
+stlia-train-denoise --data maps --out runs/real256_joint --nside 256 --real --joint \
+    --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-spin 2 --cl-backend stl --cl-masks 0,30,45 --cond log857
+```
+
+The EE/BB spectra need the `SpectrumEngine` of STL-Dev-MPI with spin spectra (commit 92f2aef or later). They run on CPU threads (`STL_THREADS`).
+
 Add `--stat-masks 0,20,30,45` to average every scattering statistic under the four galactic masks as well. This needs STL-Dev-MPI 9038114 or later; see {doc}`../installation`.
 
-`--cond log857` reads `planck857_I_n<nside>.npy`, which is already needed by `l3`. The spectrum loss keeps its Legendre tables on the GPU: about 2 GB at $N_{
-m side}=256$, $\ell_{\max}=511$, in double precision.
+`--cond log857` reads `planck857_I_n<nside>.npy`, which is already needed by `l3`. With `--cl-backend torch`, the spectrum loss keeps its Legendre tables on the GPU: about 2 GB at $N_{\rm side}=256$, $\ell_{\max}=511$, in double precision. The `stl` backend stores no table.
 
 ## Resources
 

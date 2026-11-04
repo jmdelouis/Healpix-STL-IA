@@ -187,6 +187,11 @@ def parser():
     p.add_argument("--cl-lmax", type=int, default=None, help="cl: last multipole (default 2 nside - 1)")
     p.add_argument("--cl-width", type=int, default=30, help="cl: width of the multipole bins")
     p.add_argument("--cl-apod", type=float, default=5.0, help="cl: FWHM of the mask apodisation (degrees)")
+    p.add_argument("--cl-spin", type=int, default=0, choices=[0, 2],
+                   help="cl: 0, spectra of Q and U separately; 2, EE and BB spectra of (Q, U) (needs --joint and "
+                        "the stl backend)")
+    p.add_argument("--joint", action="store_true",
+                   help="--real: one network denoises Q and U together (UNet(maps=2)); every step trains both")
     p.add_argument("--cl-backend", default="auto", choices=["auto", "torch", "stl"],
                    help="cl: spectra by the SpectrumEngine of STL-Dev-MPI (stl), by the transforms of stlia.sht "
                         "(torch), or by the engine when the installed STL-Dev-MPI has it (auto)")
@@ -249,10 +254,11 @@ def main(argv=None):
         if a.cl_backend == "auto":
             import stl_port.native
             a.cl_backend = "stl" if hasattr(stl_port.native, "SpectrumEngine") else "torch"
-        print(f"cl: spectra by the {a.cl_backend} backend", flush=True)
+        assert a.cl_spin == 0 or (a.joint and a.cl_backend == "stl"), "--cl-spin 2 needs --joint and the stl backend"
+        print(f"cl: spectra (spin {a.cl_spin}) by the {a.cl_backend} backend", flush=True)
         spectra = BinnedSpectra(a.nside, masks=[float(b) for b in a.cl_masks.split(",")], lmin=a.cl_lmin,
                                 lmax=a.cl_lmax, width=a.cl_width, apod=a.cl_apod, device=f"cuda:{a.device}",
-                                backend=a.cl_backend)
+                                backend=a.cl_backend, spin=a.cl_spin)
         cl_cache = {}
 
         def cl_loss(field, d1, d2):
@@ -263,6 +269,8 @@ def main(argv=None):
                     cl_cache.clear()
                 cl_cache[key] = SpectrumLoss(spectra, d1, d2)
             return cl_cache[key]
+    scalar_cl = weights["cl"] and a.cl_spin == 0  # per field; spin 2: one term for (Q, U)
+    assert not a.joint or (a.real and a.optimizer == "adam"), "--joint: --real and the adam optimizer"
     if a.halfmission:
         T = torch.as_tensor(np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy")), device=dev)
     a.noise_rel_std = a.noise_rel * float(train_sky.std())
@@ -320,9 +328,9 @@ def main(argv=None):
         out = {}
         if hm is not None and any(weights[t] for t in DELOUIS):
             out.update(delouis(u, d, hm[0], hm[1], field, generator=generator, test=test))
-        if hm is not None and weights["cl"]:
-            _, n1, n2 = noise[field].draw(B, test=test, generator=generator, hm=True)
-            out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u + n1, u + n2))
+        if hm is not None and scalar_cl:
+            # the half-mission noises are independent: <C(u + n1, u + n2)> = C(u, u), no bias to model
+            out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u, u))
         if weights["data"] == weights["res"] == weights["cross"] == 0:
             return out
         target, tvar = forward1(d)
@@ -372,12 +380,6 @@ def main(argv=None):
                     n = noise[field].draw(k, generator=generator)
                     acc = acc + auto_stats(u + n).sum(0)
                 bias["data"] = acc / M - auto_stats(u[None])[0]
-            if weights["cl"]:
-                _, n1, n2 = noise[field].draw(M, generator=generator, hm=True)
-                acc = 0
-                for k0 in range(0, M, B):
-                    acc = acc + spectra(u + n1[k0:k0 + B], u + n2[k0:k0 + B]).sum(0)
-                bias["cl"] = acc / M - spectra(u, u)
             if any(weights[t] for t in DELOUIS):
                 st0, _ = cross_stats(torch.stack([u, T]), torch.stack([u, u]))
                 uu, tu = st0[0], st0[1]  # Phi(u, u), Phi(T, u)
@@ -402,8 +404,8 @@ def main(argv=None):
         if weights["data"]:
             target, tvar = forward1(d)
             out["data"] = loss_fn((auto_stats(u[None])[0] + bias["data"])[None], target, tvar)
-        if weights["cl"]:
-            out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u, u) + bias["cl"])
+        if scalar_cl:
+            out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u, u))  # cross spectrum: unbiased, no bias
         if any(weights[t] for t in DELOUIS):
             d1, d2 = hm
             st, var = cross_stats(torch.stack([d1, d, T, u, T]), torch.stack([d2, u, d, u, u]))
@@ -420,7 +422,7 @@ def main(argv=None):
         c = np.log(np.clip(i857, np.percentile(i857[i857 > 0], 0.1), None))
         cond = torch.as_tensor((c - c.mean()) / c.std(), device=dev, dtype=torch.float32)[None, None]
     net = UNet(a.nside, levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz,
-               cond=0 if cond is None else 1).to(dev)
+               cond=0 if cond is None else 1, maps=2 if a.joint else 1).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
     nparams = sum(q.numel() for q in net.parameters())
@@ -449,6 +451,30 @@ def main(argv=None):
         fixed = {f: (s, *observe(f, s, test=True, generator=gen))
                  for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
     fields = list(fixed)
+
+    if a.joint:
+        # one network for (Q, U): d2 [2, npix], and the EE/BB spectrum loss of (Q, U) (--cl-spin 2)
+        d2 = torch.stack([fixed[f][1] for f in fields])
+        pol_loss = None
+        if weights["cl"] and a.cl_spin == 2:
+            hm1, hm2 = (torch.stack([fixed[f][2][h] for f in fields]) for h in (0, 1))
+            pol_loss = SpectrumLoss(spectra, hm1, hm2)
+
+        def joint_outputs():
+            with torch.no_grad():
+                u2 = net(d2[None], d2.std(), cond=cond)[0]
+            return {f: u2[i] for i, f in enumerate(fields)}
+
+        def joint_terms(u2, bias=None):
+            """Terms of `--loss` for the joint output `u2` `[2, npix]`, in parts: the
+            scattering terms of each field, then the EE/BB term of the pair.  Each
+            part must be differentiated before the next one is computed: the
+            engines keep the state of their last forward only."""
+            for i, f in enumerate(fields):
+                _, d, hm = fixed[f]
+                yield frozen_losses(u2[i], d, f, bias[f], hm=hm) if bias else losses(u2[i], d, f, hm=hm)
+            if pol_loss is not None:
+                yield {"cl": pol_loss(spectra(u2, u2))}  # cross spectra of the half missions: no bias
 
     def evaluate(save=False, outputs=None):
         """Evaluate the network, or the maps `outputs[field]` (L-BFGS)."""
@@ -487,6 +513,9 @@ def main(argv=None):
     if a.bias == "frozen":
         assert a.real or a.optimizer == "lbfgs", "--bias frozen needs fixed observations (--real or --optimizer lbfgs)"
         frozen = (estimate_bias, frozen_losses)
+    if a.joint:
+        return run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bias if frozen else None,
+                         weights, evaluate, show, {"j": j, "coefficients": len(one.plan), "noise_rms": rms})
     if a.optimizer == "lbfgs":
         return run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev,
                          {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, frozen)
@@ -534,6 +563,53 @@ def main(argv=None):
         json.dump({"args": vars(a), "j": j, "coefficients": len(one.plan), "parameters": nparams, "noise_rms": rms,
                    "loss_weights": weights, "seconds": time.time() - started, "loss_history": hist,
                    "evals": evals}, f, indent=1)
+
+
+def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bias, weights, evaluate, show, meta):
+    """Adam training of a joint (Q, U) network on the fixed PR3 maps: every step
+    denoises both fields at once and sums their terms (``--joint``).  With
+    frozen biases, those of every field are re-estimated every `--bias-every`
+    steps at the current output."""
+    opt = torch.optim.Adam(net.parameters(), lr=a.lr)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
+    nparams = sum(q.numel() for q in net.parameters())
+    bias_gen = torch.Generator(device=d2.device).manual_seed(a.seed + 777)
+    bias = None
+    hist = {"step": [], "loss": [], **{t: [] for t in TERMS}}
+    evals = {0: evaluate(outputs=joint_outputs())}
+    show(0, evals[0])
+    started = time.time()
+    for step in range(1, a.steps + 1):
+        u2 = net(d2[None], d2.std(), cond=cond)[0]
+        if estimate_bias is not None and (step - 1) % a.bias_every == 0:
+            bias = {f: estimate_bias(u2[i].detach(), f, generator=bias_gen) for i, f in enumerate(fields)}
+        x = u2.detach().requires_grad_()
+        terms = {}
+        for part in joint_terms(x, bias):
+            sum(weights[k] * v for k, v in part.items()).backward()  # gradient into x.grad
+            for k, v in part.items():
+                terms[k] = terms.get(k, 0) + v.detach()
+        loss = sum(weights[k] * v for k, v in terms.items())
+        opt.zero_grad(set_to_none=True)
+        u2.backward(x.grad)  # one backward through the network
+        opt.step()
+        sched.step()
+        if step % a.log_every == 0 or step == 1:
+            hist["step"].append(step)
+            hist["loss"].append(loss.item())
+            for t in TERMS:
+                hist[t].append(terms[t].item() if t in terms else None)
+            print(f"step {step} loss {loss.item():.6g} " + " ".join(f"{k} {v.item():.4g}" for k, v in terms.items())
+                  + f" {(time.time() - started) / step:.3f} s/step", flush=True)
+        if step % a.eval_every == 0 or step == a.steps:
+            evals[step] = evaluate(save=step == a.steps, outputs=joint_outputs())
+            show(step, evals[step])
+            path = os.path.join(a.out, "model.pt")
+            torch.save({"state": net.state_dict(), **net.config(), **meta}, path + ".tmp")
+            os.replace(path + ".tmp", path)
+    with open(os.path.join(a.out, "train.json"), "w") as f:
+        json.dump({"args": vars(a), **meta, "parameters": nparams, "loss_weights": weights,
+                   "seconds": time.time() - started, "loss_history": hist, "evals": evals}, f, indent=1)
 
 
 def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta, frozen=None):

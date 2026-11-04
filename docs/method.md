@@ -76,22 +76,27 @@ With `--stat-masks 0,20,30,45`, every scattering coefficient of every term (`dat
 The term `cl` asks $u$ to have the power spectrum of the sky ({mod}`stlia.spectra`). Its noise-free target is the half-mission cross spectrum:
 
 $$
-C_b(m\,d_1, m\,d_2) \quad\text{vs}\quad \langle C_b(m(u+\tilde n_1), m(u+\tilde n_2))\rangle,
+C_b(m\,d_1, m\,d_2) \quad\text{vs}\quad C_b(m\,u, m\,u),
 $$
 
 for each galactic mask $m$ (`--cl-masks`, $|b|$ above each cut, apodised by `--cl-apod`). Here $C_b$ is the pseudo-spectrum of the masked maps, divided by the mean of the squared mask and binned in multipole (`--cl-lmin`, `--cl-lmax`, `--cl-width`).
 
 Each bin is weighted by the Gaussian variance of the target, $(C_b^{11}C_b^{22} + (C_b^{12})^2)/\nu_b$, where $\nu_b$ is the number of modes of the bin times the effective sky fraction of the mask.
 
-This term constrains the power at high Galactic latitude. The full-sky ergodic weights of the scattering statistics hardly do so, because the Galactic plane dominates their variance. With `--bias frozen`, the term is modelled as $C_b(u,u) + B_{\rm cl}$.
+The model has no noise term and no noise bias, with live or frozen biases alike. The half-mission noises are independent with zero mean, so $\langle C_b(u+\tilde n_1, u+\tilde n_2)\rangle = C_b(u,u)$ exactly. Noise draws would only add scatter to the gradient. An estimated bias, close to zero but noisy, would make the solution drift.
+
+This term constrains the power at high Galactic latitude. The full-sky ergodic weights of the scattering statistics hardly do so, because the Galactic plane dominates their variance.
 
 The spectra come from one of two differentiable `anafast` (`--cl-backend`), which agree with each other and with `healpy.anafast` to about $10^{-12}$:
 
 - **`stl`**: the `SpectrumEngine` of STL-Dev-MPI (from commit 5648ba1), on the CPU or the GPU, with its exact VJP. `auto`, the default, uses it when the installed engine has it.
 - **`torch`**: a ring-FFT spherical harmonic transform ({class}`stlia.sht.HEALPixSHT`), adapted from [healpix-analyse](https://github.com/GRID4EARTH/healpix-analyse) and FOSCAT, with gradients through `torch.autograd`.
 
-On a T4 at $
-side=256$, the spectra and gradient of 4 pairs of maps under 3 masks take 1.0 s with the engine, against 16 s with `torch`. They are the spectra of the scalar maps, Q and U separately, as the network treats them. E/B spectra (`spin=2`) are available in {class}`~stlia.sht.HEALPixSHT`, but a loss on them needs a joint (Q, U) network.
+On a T4 at $\nside=256$, the spectra and gradient of 4 pairs of maps under 3 masks take 1.0 s with the engine, against 16 s with `torch`. By default, they are the spectra of the scalar maps, Q and U separately, as the network treats them. With a joint (Q, U) network (`--joint`, below), `--cl-spin 2` uses the EE and BB cross spectra instead, from the spin-2 transforms of the engine (STL-Dev-MPI 92f2aef or later).
+
+## A joint (Q, U) network
+
+With `--joint` (`--real` only), one network ({class}`~stlia.unet.UNet` with `maps=2`) takes the pair $(Q, U)$ and returns $(u_Q, u_U)$, with one input scale for both. Every step trains both fields: the scattering terms of each are summed, and the EE/BB spectrum term constrains the pair. Each field differentiates its terms in turn, because the engines keep the state of their last forward only. The gradients add up on the output, and go back through the network once.
 
 ## Conditioning on the dust intensity
 

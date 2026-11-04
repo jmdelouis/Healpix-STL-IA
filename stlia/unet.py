@@ -192,6 +192,10 @@ class UNet(nn.Module):
         concatenated to the input and, averaged down the pyramid, to the
         input of every decoder level, so that the decoding depends on them.
         Sphere convolutions only.
+    maps : int
+        Number of maps denoised together: 1 (a scalar map, `d` `[B, npix]`)
+        or 2 (a (Q, U) pair, `d` `[B, 2, npix]`, both in the input and in
+        the output, sharing one input scale).  Sphere convolutions only.
 
     Notes
     -----
@@ -199,7 +203,7 @@ class UNet(nn.Module):
     """
 
     def __init__(self, nside, levels=4, channels=None, slope=0.2, conv="sphere", gauge="phi", ksz=3, norm="group",
-                 scale=None, cond=0):
+                 scale=None, cond=0, maps=1):
         """`norm`: 'group' (GroupNorm over the map) or 'pixel' (over the
         channels of every pixel: required to train on patches and apply on the
         sky).  `scale`: fixed input scale (uK); None uses the std of every map."""
@@ -208,8 +212,9 @@ class UNet(nn.Module):
         assert conv in ("sphere", "faces")
         assert conv == "sphere" or norm == "group", "face images: GroupNorm only"
         self.nside, self.levels, self.conv, self.gauge, self.ksz = nside, levels, conv, gauge, ksz
-        self.norm, self.scale, self.cond = norm, scale, int(cond)
+        self.norm, self.scale, self.cond, self.maps = norm, scale, int(cond), int(maps)
         assert self.cond == 0 or conv == "sphere", "conditioning maps: sphere convolutions only"
+        assert self.maps == 1 or conv == "sphere", "joint maps: sphere convolutions only"
         ch = list(channels or default_channels(levels))
         assert len(ch) == levels, "one channel count per level"
         self.channels = ch
@@ -217,10 +222,10 @@ class UNet(nn.Module):
         self.dec = nn.ModuleList()
         if conv == "sphere":
             for k, c in enumerate(ch):
-                self.enc.append(SphereBlock(1 + self.cond if k == 0 else ch[k - 1], c, ksz, slope, norm))
+                self.enc.append(SphereBlock(self.maps + self.cond if k == 0 else ch[k - 1], c, ksz, slope, norm))
             for k in range(levels - 2, -1, -1):
                 self.dec.append(SphereBlock(ch[k + 1] + ch[k] + self.cond, ch[k], ksz, slope, norm))
-            self.head = nn.Conv1d(ch[0], 1, 1)
+            self.head = nn.Conv1d(ch[0], self.maps, 1)
             self.geometry = None
         else:
             self.pad = Padding()
@@ -239,7 +244,7 @@ class UNet(nn.Module):
         """Constructor arguments, saved with the weights in ``model.pt``."""
         return {"nside": self.nside, "levels": self.levels, "channels": self.channels, "conv": self.conv,
                 "gauge": self.gauge, "ksz": self.ksz, "norm": self.norm, "scale": self.scale,
-                "cond": self.cond}
+                "cond": self.cond, "maps": self.maps}
 
     def input_scale(self, d):
         """Scale of the input: the fixed `scale`, or the std of `d`."""
@@ -250,6 +255,7 @@ class UNet(nn.Module):
         (`stlia.regions.Patches`, levels as the network), `cond` `[B, cond, n]`
         the conditioning maps on the same pixels; returns `u`."""
         assert self.conv == "sphere" and self.norm == "pixel", "patches need sphere convolutions and pixel norm"
+        assert self.maps == 1, "patches: one map"
         scale = self.input_scale(d)
         x = (d / scale).float()[:, None]
         conds = self._cond_levels(cond, lambda c, k: patches.pool(c, k))
@@ -284,7 +290,8 @@ class UNet(nn.Module):
         return out
 
     def forward(self, d, scale=None, cond=None):
-        """`d`: NESTED maps `[B, 12 nside^2]`; returns `u` with the dtype of `d`.
+        """`d`: NESTED maps `[B, 12 nside^2]` (`[B, 2, 12 nside^2]` with
+        `maps` = 2); returns `u`, shaped and typed like `d`.
         `scale` overrides the input scale of the network; `cond`
         `[B, cond, 12 nside^2]`: the conditioning maps (see the class)."""
         if scale is None:
@@ -292,7 +299,8 @@ class UNet(nn.Module):
         x = (d / scale).float()
         if self.conv == "sphere":
             geo = self.stencils(x.device)
-            x = x[:, None]
+            if self.maps == 1:
+                x = x[:, None]
             conds = self._cond_levels(cond, lambda c, k: c.view(c.shape[0], c.shape[1], -1, 4).mean(-1))
             if conds:
                 x = torch.cat([x, conds[0]], 1)
@@ -306,7 +314,9 @@ class UNet(nn.Module):
                 k = self.levels - 2 - i
                 parts = [x.repeat_interleave(4, dim=-1), skips[k]] + ([conds[k]] if conds else [])
                 x = dec(torch.cat(parts, 1), geo[k])
-            r = self.head(x)[:, 0]
+            r = self.head(x)
+            if self.maps == 1:
+                r = r[:, 0]
         else:
             n = self.nside
             x = x[:, self.nest_of_face].reshape(-1, 1, n, n)
@@ -334,6 +344,6 @@ def load(path, device):
     ck = torch.load(path, map_location=device, weights_only=False)
     net = UNet(ck["nside"], ck["levels"], ck["channels"], conv=ck.get("conv", "faces"),
                gauge=ck.get("gauge", "phi"), ksz=ck.get("ksz", 3), norm=ck.get("norm", "group"),
-               scale=ck.get("scale"), cond=ck.get("cond", 0)).to(device)
+               scale=ck.get("scale"), cond=ck.get("cond", 0), maps=ck.get("maps", 1)).to(device)
     net.load_state_dict(ck["state"])
     return net.eval(), ck

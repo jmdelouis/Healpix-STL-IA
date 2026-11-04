@@ -88,9 +88,9 @@ The amortised denoiser is compared with the method it replaces: the same loss mi
 
 \paragraph{Spectrum loss.} For the same reason, we add a term on the binned half-mission cross spectrum,
 \begin{equation}
-  L_{\rm cl}:\ C_b(m\,d_1,m\,d_2)\ \text{vs}\ \langle C_b(m(u+\tilde n_1),m(u+\tilde n_2))\rangle,
+  L_{\rm cl}:\ C_b(m\,d_1,m\,d_2)\ \text{vs}\ C_b(m\,u,m\,u),
 \end{equation}
-for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$ and $45^\circ$ (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$ to $2\nside-1$, each weighted by the Gaussian variance of the target. The spectra come from a differentiable ring-FFT spherical harmonic transform adapted from FOSCAT and healpix-analyse. They are the spectra of $Q$ and $U$ separately, as the network treats them; E and B spectra need a joint $(Q,U)$ network.
+for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$ and $45^\circ$ (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$ to $2\nside-1$, each weighted by the Gaussian variance of the target. The two half-mission noises are independent, so $\langle C_b(u+\tilde n_1,u+\tilde n_2)\rangle=C_b(u,u)$. The model therefore has no noise term and no noise bias, whether the scattering biases are frozen or not. The spectra and their gradients come from the differentiable \texttt{anafast} of STL-Dev-MPI. They are the spectra of $Q$ and $U$ separately, as the network treats them. A joint $(Q,U)$ network constrains the EE and BB cross spectra instead.
 
 \paragraph{Conditioning on the dust intensity.} The network can only infer the local signal-to-noise ratio from $d$, and removes almost nothing where the dust is bright (Sect.~\ref{sec:real}). We give it $\log I_{857}$, standardised, as an additional input, concatenated to the input and, averaged down the pyramid, to the input of every decoder level, so that the decoding depends on the local dust intensity. Since the 857\,GHz map is also the template of $L_3$, the residual $d-u$ must be checked to remain uncorrelated with it.
 

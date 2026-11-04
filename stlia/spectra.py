@@ -2,17 +2,22 @@
 
 The loss ``cl`` asks the denoised map to have the power spectrum of the sky.
 Its noise-free target is the half-mission cross spectrum ``C_b(d1, d2)``, and
-its model the same estimator on ``u`` plus fresh half-mission noise draws:
+its model the spectrum of ``u``:
 
-    cl    C_b(m d1, m d2)  vs  < C_b(m (u + n1), m (u + n2)) >
+    cl    C_b(m d1, m d2)  vs  C_b(m u, m u)
+
+since the two half-mission noises are independent, ``< C_b(u + n1, u + n2) >``
+equals ``C_b(u, u)``: the model needs no noise draw and no noise bias.
 
 for every galactic mask ``m`` (``|b|`` above a cut, apodised).  The spectra are
 pseudo-spectra of the masked maps divided by the mean of the squared mask,
 binned in multipole, and compared with a Gaussian estimate of the variance
 of each bin of the target.
 
-The spectra are those of the scalar maps (Q and U separately, as the network
-treats them); E/B spectra need a joint (Q, U) network.
+With ``spin=0`` the spectra are those of scalar maps (Q and U separately, as
+the network treats them by default).  With ``spin=2`` the maps are (Q, U)
+pairs and the spectra are EE and BB, for a joint (Q, U) network
+(``UNet(maps=2)``); they need the ``stl`` backend.
 
 Two backends compute the pseudo-spectra: ``torch``, the ring-FFT transform of
 :mod:`stlia.sht` through ``torch.autograd``, and ``stl``, the differentiable
@@ -30,8 +35,9 @@ from .sht import HEALPixSHT
 
 
 class _EngineCross(torch.autograd.Function):
-    """Pseudo cross spectra `[B, K, lmax + 1]` of maps `a`, `b` `[B, npix]` by
-    the STL-Dev-MPI engine, with its VJP."""
+    """Pseudo cross spectra `[B, K, lmax + 1]` of maps `a`, `b` `[B, npix]`
+    (spin 2: `[B, K, 4, lmax + 1]` of (Q, U) pairs `[B, 2, npix]`, components
+    E1E2, B1B2, E1B2, B1E2) by the STL-Dev-MPI engine, with its VJP."""
 
     @staticmethod
     def forward(ctx, a, b, native):
@@ -59,8 +65,8 @@ class _EngineCross(torch.autograd.Function):
 class _Native:
     """The cross-spectrum engines of STL-Dev-MPI, one per batch size."""
 
-    def __init__(self, nside, lmax, masks, device):
-        self.nside, self.lmax, self.masks = nside, lmax, masks
+    def __init__(self, nside, lmax, masks, device, spin=0):
+        self.nside, self.lmax, self.masks, self.spin = nside, lmax, masks, spin
         dev = torch.device(device)
         self.backend = "gpu" if dev.type == "cuda" else "cpu"
         self.index = dev.index or 0
@@ -70,7 +76,8 @@ class _Native:
         if batch not in self.engines:
             from stl_port.native import SpectrumEngine
             self.engines[batch] = SpectrumEngine(self.nside, lmax=self.lmax, batch=batch, backend=self.backend,
-                                                 device=self.index, cross=True, masks=self.masks)
+                                                 device=self.index, cross=True, masks=self.masks,
+                                                 **({"spin": self.spin} if self.spin else {}))
         return self.engines[batch]
 
 
@@ -112,17 +119,23 @@ class BinnedSpectra:
         ``torch``: the transforms of :mod:`stlia.sht`; ``stl``: the
         ``SpectrumEngine`` of STL-Dev-MPI, on the GPU when `device` is one
         (the engine is built at the first call of each batch size).
+    spin : {0, 2}
+        0: spectra of scalar maps `[..., npix]`; 2: EE and BB spectra of
+        (Q, U) pairs `[..., 2, npix]`, ``stl`` backend only.
     """
 
     def __init__(self, nside, masks=(0.0, 30.0), lmin=10, lmax=None, width=30, apod=5.0, device="cpu",
-                 backend="torch"):
+                 backend="torch", spin=0):
         self.lmax = lmax or 2 * nside - 1
         self.cuts = list(masks)
         m = np.stack([galactic_mask(nside, b, apod) for b in self.cuts])
+        assert spin in (0, 2), "spin 0 or 2"
+        assert spin == 0 or backend == "stl", "EE/BB spectra: stl backend only"
+        self.spin = spin
         if backend == "torch":
             self.sht = HEALPixSHT(nside, lmax=self.lmax, dtype=torch.float64, device=device)
         elif backend == "stl":
-            self.native = _Native(nside, self.lmax, m, device)
+            self.native = _Native(nside, self.lmax, m, device, spin)
         else:
             raise ValueError("backend must be torch or stl")
         self.backend = backend
@@ -141,12 +154,17 @@ class BinnedSpectra:
         self.modes = torch.as_tensor(fsky[:, None] * modes[None], device=device)  # [M, nb]
 
     def __call__(self, a, b=None):
-        """Binned cross spectra `[..., M, nb]` of maps `a` (and `b`) `[..., npix]`."""
+        """Binned cross spectra `[..., M, nb]` of maps `a` (and `b`) `[..., npix]`;
+        spin 2: `[..., M, 2, nb]` (EE, BB) of (Q, U) pairs `[..., 2, npix]`."""
         if self.backend == "stl":
             b = a if b is None else b
-            lead = a.shape[:-1]
-            cl = _EngineCross.apply(a.reshape(-1, a.shape[-1]), b.reshape(-1, b.shape[-1]), self.native)
-            cl = cl.reshape(*lead, *cl.shape[1:]) / self.w2[:, None].to(cl.dtype)
+            field = a.shape[-1:] if self.spin == 0 else a.shape[-2:]
+            lead = a.shape[:len(a.shape) - len(field)]
+            cl = _EngineCross.apply(a.reshape(-1, *field), b.reshape(-1, *field), self.native)
+            w2 = self.w2[:, None].to(cl.dtype)
+            if self.spin:
+                cl, w2 = cl[:, :, :2], w2[:, None]  # E1E2, B1B2
+            cl = cl.reshape(*lead, *cl.shape[1:]) / w2
             return cl @ self.binning.T.to(cl.dtype)
         ma = a[..., None, :] * self.masks
         mb = ma if b is None else b[..., None, :] * self.masks
@@ -156,7 +174,8 @@ class BinnedSpectra:
     def variance(self, c11, c22, c12):
         """Gaussian variance of a binned cross spectrum from the auto and cross
         spectra of the two maps: (C11 C22 + C12^2) / modes."""
-        return (c11 * c22 + c12 ** 2) / self.modes
+        modes = self.modes[:, None] if self.spin else self.modes
+        return (c11 * c22 + c12 ** 2) / modes
 
 
 class SpectrumLoss:
@@ -170,7 +189,7 @@ class SpectrumLoss:
             self.var = spectra.variance(spectra(d1), spectra(d2), self.target).clamp_min(1e-300)
 
     def __call__(self, model):
-        """`model` `[M, nb]` (or `[B, M, nb]`, averaged over B) -> scalar."""
-        if model.dim() == 3:
+        """`model` shaped like the target (or with a leading batch, averaged) -> scalar."""
+        if model.dim() > self.target.dim():
             model = model.mean(0)
         return ((model - self.target) ** 2 / self.var).mean()

@@ -113,3 +113,25 @@ def test_conditioning_maps():
         part = net.forward_patches(m[:, ids], Patches([ids], nside, levels), cond=c[:, :, ids])[0]
     near = (vecs[ids] @ vecs[1000]) >= math.cos(math.radians(5))
     torch.testing.assert_close(part[near], full[ids][near], atol=5e-4, rtol=1e-4)
+
+
+def test_joint_qu_network(tmp_path):
+    """maps=2: (Q, U) in and out, identity at initialisation, both outputs
+    depend on both inputs once trained, and the network saves and loads."""
+    torch.manual_seed(0)
+    qu = torch.stack([sky(seed=1), sky(seed=2)], 1)  # [B, 2, npix]
+    net = UNet(NSIDE, levels=2, channels=[4, 8], maps=2)
+    torch.testing.assert_close(net(qu), qu)
+    torch.nn.init.normal_(net.head.weight, std=0.1)
+    with torch.no_grad():
+        u = net(qu, scale=1.0)
+        other = qu.clone()
+        other[:, 1] *= -1  # change U only
+        q_other = net(other, scale=1.0)[:, 0]
+    assert u.shape == qu.shape
+    assert not torch.allclose(u[:, 0], q_other)  # Q depends on U
+    torch.save({"state": net.state_dict(), **net.config()}, tmp_path / "model.pt")
+    net2, ck = load(tmp_path / "model.pt", "cpu")
+    assert ck["maps"] == 2
+    with torch.no_grad():
+        torch.testing.assert_close(net2(qu, scale=1.0), net.eval()(qu, scale=1.0))

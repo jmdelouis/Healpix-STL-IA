@@ -79,3 +79,21 @@ def test_engine_spectra_match_torch():
         grads.append((x.grad, y.grad))
     for g, h in zip(*grads):
         torch.testing.assert_close(g, h, rtol=1e-7, atol=1e-12 * float(h.abs().max()))
+
+
+def test_engine_ee_bb_match_healpy():
+    native = pytest.importorskip("stl_port.native")
+    if not hasattr(native, "SpectrumEngine") or "spin" not in native.SpectrumEngine.__init__.__code__.co_varnames:
+        pytest.skip("STL-Dev-MPI without spin spectra")
+    cuts, lmin, width, apod = (0.0, 20.0), 2, 4, 10.0
+    spec = BinnedSpectra(NSIDE, masks=cuts, lmin=lmin, width=width, apod=apod, backend="stl", spin=2)
+    a = np.stack([nest_map(11), nest_map(12)])  # (Q, U) NESTED
+    b = np.stack([nest_map(13), nest_map(14)])
+    got = spec(torch.as_tensor(a), torch.as_tensor(b)).numpy()  # [M, 2, nb]
+    lmax = 2 * NSIDE - 1
+    for k, cut in enumerate(cuts):
+        w = hp.reorder(galactic_mask(NSIDE, cut, apod), n2r=True)
+        ring = lambda m: [np.zeros_like(w)] + [w * hp.reorder(x, n2r=True) for x in m]  # noqa: E731
+        cl = hp.anafast(ring(a), ring(b), pol=True, lmax=lmax, iter=0)[1:3] / np.mean(w ** 2)
+        ref = cl @ spec.binning.numpy().T
+        np.testing.assert_allclose(got[k], ref, rtol=1e-8, atol=1e-10 * np.abs(ref).max())
