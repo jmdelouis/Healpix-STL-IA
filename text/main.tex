@@ -256,7 +256,34 @@ In the mock tests of Sects.~3 and \ref{sec:n256} the ``clean'' sky is the PR3 ma
 
 \paragraph{Per-map reference.} Minimised directly over the pixels of $u$ by L-BFGS (Sect.~\ref{sec:lbfgs}; 10 rounds of 50 iterations, 6\,min per round on an A100), the same loss reaches a similar final value as the network, and a similar level of removed noise: the rms of $d-u$ is 0.98 ($Q$) and 0.73 ($U$) times that of the noise. The maps of the BICEP2 field look much the same (Fig.~\ref{fig:lbfgs}). The spectra differ in two ways. At large scales, $10\lesssim\ell\lesssim100$, the L-BFGS solution changes the map well above the noise: the spectrum of $d-u$ is 3 to 10 times that of the noise, and for $30\le\ell<60$ the EE spectrum of $u$ is 8\% below the cross spectrum and BB 9\% above, where the network is within 1\%. The statistics of the loss do not fix the configuration of the large scales, which the per-pixel optimiser is free to change, while the network, which predicts a correction of $d$ from its local features, leaves them in place. At small scales the two behave alike: for $200\le\ell<300$, $u$ reaches 54\% (EE) and 85\% (BB) of the cross spectrum with L-BFGS, against 64\% and 85\% with the network. The amortised network is therefore not worse than the per-map minimisation of the same loss, and better at large scales; the deficit of power at small scales comes from the loss, not from the amortisation.
 
-The runs with frozen noise biases, the spectrum loss and the 857\,GHz conditioning (Sect.~\ref{sec:variants}) are in progress, for the network and for the per-map reference; they address this deficit.
+\begin{table*}
+  \caption{Denoising of the PR3 maps at $\nside=256$ with the loss $\mathcal{L}_{\rm data}+L_1+L_2+L_3$. $\sigma_{d-u}/\sigma_n$: rms of the removed part over that of the FFP10 noise ($Q$, $U$). $u/(d_1\times d_2)$: EE and BB spectra of $u$ over the half-mission cross spectrum, over $|b|>30^\circ$, in four multipole ranges (1 for a perfect denoising); $d$ gives the same ratio for the data. $(d-u)/n$: EE spectrum of the removed part over the FFP10 noise spectrum.}
+  \label{tab:real}
+  \centering
+  \footnotesize
+  \begin{tabular}{lcccccc}
+    \hline\hline
+    & $\sigma_{d-u}/\sigma_n$ & \multicolumn{4}{c}{$u/(d_1\times d_2)$, EE / BB} & $(d-u)/n$ EE \\
+    & $Q$, $U$ & $30\le\ell<60$ & $100\le\ell<200$ & $200\le\ell<300$ & $300\le\ell<450$ & $30\le\ell<60$ \\
+    \hline
+    data $d$ & -- & 1.02 / 1.04 & 1.36 / 1.53 & 2.13 / 3.06 & 4.25 / 6.67 & -- \\
+    network, biases not frozen & 0.80, 0.74 & 0.99 / 1.00 & 0.94 / 1.01 & 0.64 / 0.85 & 0.54 / 0.90 & 0.71 \\
+    L-BFGS, biases not frozen & 0.98, 0.73 & 0.92 / 1.09 & 0.86 / 1.04 & 0.54 / 0.85 & 0.80 / 1.27 & 3.2 \\
+    L-BFGS, frozen biases & 0.73, 0.64 & 0.94 / 0.96 & 0.88 / 1.05 & 0.30 / 0.43 & 0.32 / 0.49 & 1.16 \\
+    \hline
+  \end{tabular}
+\end{table*}
+
+\begin{figure}
+  \centering
+  \figfile{lbfgsfz_spectra.pdf}{\columnwidth}
+  \caption{Same as Fig.~\ref{fig:real_spectra} for the per-map L-BFGS reference with the noise biases frozen as in \citet{delouis2022}.}
+  \label{fig:lbfgsfz}
+\end{figure}
+
+\paragraph{Frozen noise biases.} With the biases frozen as in \citet{delouis2022} (Sect.~\ref{sec:variants}; 10 rounds of 50 L-BFGS iterations, the biases re-estimated with 40 realisations at the start of every round, 6.5\,min per round), the per-map solution no longer changes the large scales: the spectrum of $d-u$ is within 16\% of the noise for $30\le\ell<60$, against a factor 3 without frozen biases, and the spectra of $u$ follow the cross spectrum to within 6\% (EE) and 4\% (BB) there (Table~\ref{tab:real}, Fig.~\ref{fig:lbfgsfz}). At small scales it removes more power: $u$ reaches only 30\% (EE) and 43\% (BB) of the cross spectrum for $200\le\ell<300$. A possible reason, which we have not tested, is that the frozen bias is estimated at a $u$ that still contains part of the noise, and overestimates the bias of the cleaner map it leads to. The network trained with the biases not frozen keeps the best balance of the three: it is the closest to the cross spectrum at all scales up to $\ell=200$ and loses less power beyond.
+
+The network runs with frozen biases, the spectrum loss, the 857\,GHz conditioning and the masked statistics (Sect.~\ref{sec:variants}) are in progress; the spectrum loss and the masks address the deficit at small scales directly.
 
 \section{Discussion and next steps}
 

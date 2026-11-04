@@ -31,6 +31,7 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 - **Reproduction recipe.** `REPRODUCE.md` and machine-independent scripts: `scripts/env.sh`, `download_planck.sh`, `prepare_data.slurm`, `build_bridge.slurm`, `reproduce.sh`, `train_gpu.slurm`, `train_cpu.slurm`, `train_patches_gpu.slurm`.
 
 ### Changed
+- **Paper.** Sect. 5 adds the frozen-bias L-BFGS reference `l256_fz` and a table comparing the network and the two L-BFGS references on the PR3 maps.
 - **Paper.** Sect. 5 now gives the per-map L-BFGS reference `l256_dl123` (Fig. 11), with its maps and spectra compared to those of the network.
 - `scripts/make_figures_real.py`: the full-sky figure shows the data `d` next to `u` and `d - u` (paper: figure caption updated).
 - **Noise-bias wording.** The paper, the method page and the docstring of the L-BFGS reference now say that no noise bias is frozen: the statistics of `u + n_i` are recomputed at the current `u` at every evaluation. They said, wrongly, that the biases were re-estimated between batches of iterations as in Delouis et al. (2022).
