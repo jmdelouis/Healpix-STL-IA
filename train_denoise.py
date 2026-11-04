@@ -24,6 +24,14 @@ on the scattering covariances (`stlia.stl_torch.DenoiseLoss`, ergodic weights):
   res    S(d - u)           vs  mean_i S(n_i)   (what is removed looks like noise)
   cross  S(2u - d)          vs  S(d)            (u - r looks like u + r)
 
+and the full-sky terms of Delouis et al. (2022), with the cross statistics
+S(a, b) of the GPU engine and half-mission observations d1 = sky + n1,
+d2 = sky + n2 of the same FFP10 simulation as d (T: the 857 GHz map):
+
+  l1   S(d1, d2)  vs  < S(u + ñ1, u + ñ2) >
+  l2   S(d, u)    vs  < S(u + ñ, u) >
+  l3   S(T, d)    vs  < S(T, u + ñ) >
+
 With r = d - u, d = u + r: if r is a noise independent of u with a symmetric
 distribution, u + r and u - r have the same statistics, so `cross` asks the
 residual to be uncorrelated with u (for the quadratic terms, by the
@@ -57,7 +65,30 @@ from stlia.unet import UNet
 
 from stl_port.native import NativeEngine  # noqa: E402  (STL-Dev-MPI python/stl_ensemble)
 
-TERMS = ("data", "res", "cross")
+TERMS = ("data", "res", "cross", "l1", "l2", "l3")
+DELOUIS = ("l1", "l2", "l3")
+
+
+class CrossStats(torch.autograd.Function):
+    """Full-sky cross statistics S(a_i, b_i) of the pairs `a`, `b` `[N, npix]`
+    (`NativeEngine(..., cross=True)`, GPU) -> `[N, ncoeff, 2]`; the moments of
+    the last call are kept in `run["var"]`."""
+
+    @staticmethod
+    def forward(ctx, a, b, run):
+        run["generation"] += 1
+        g = run["generation"]
+        values, var = run["engine"].forward_cross(a.detach().cpu().numpy(), b.detach().cpu().numpy(),
+                                                  generation=g, moments=True)
+        run["var"] = torch.as_tensor(var, device=a.device)
+        ctx.run, ctx.g, ctx.device = run, g, a.device
+        return torch.from_numpy(as_real(values).copy()).to(a.device)
+
+    @staticmethod
+    def backward(ctx, grad):
+        cot = grad.detach().cpu().numpy()
+        ga, gb = ctx.run["engine"].vjp_cross(cot[..., 0] + 1j * cot[..., 1], generation=ctx.g)
+        return torch.from_numpy(np.ascontiguousarray(ga)).to(ctx.device),             torch.from_numpy(np.ascontiguousarray(gb)).to(ctx.device), None
 
 
 def level_powers(x, levels):
@@ -91,18 +122,26 @@ class Noise:
         elif a.noise == "pr3white":
             self.sigma = a.noise_scale * load(f"noise_std_{field}")
         else:
-            self.train = torch.stack([a.noise_scale * load(f"noise_{field}", k) for k in id_range(a.sims_train)])
-            self.test = torch.stack([a.noise_scale * load(f"noise_{field}", k) for k in id_range(a.sims_test)])
+            kinds = ("noise", "noisehm1", "noisehm2") if a.halfmission else ("noise",)
+            self.train = [torch.stack([a.noise_scale * load(f"{kd}_{field}", k) for k in id_range(a.sims_train)])
+                          for kd in kinds]
+            self.test = [torch.stack([a.noise_scale * load(f"{kd}_{field}", k) for k in id_range(a.sims_test)])
+                         for kd in kinds]
         self.rms = float(self.draw(64, test=True).square().mean().sqrt())
 
-    def draw(self, k, test=False, generator=None):
+    def draw(self, k, test=False, generator=None, hm=False):
+        """`[k, npix]` full-mission noise; with `hm`, the triple (n, n1, n2) of
+        the same simulations and signs (full and half missions)."""
         if self.mode != "pr3sims":
+            assert not hm, "half-mission noise needs --noise pr3sims"
             return self.sigma * torch.randn(k, self.npix, generator=generator, device=self.dev, dtype=self.sigma.dtype)
-        pool = self.test if test else self.train
-        idx = torch.randperm(len(pool), generator=generator, device=self.dev)[: min(k, len(pool))]
+        pools = self.test if test else self.train
+        idx = torch.randperm(len(pools[0]), generator=generator, device=self.dev)[: min(k, len(pools[0]))]
         idx = idx[torch.arange(k, device=self.dev) % len(idx)]  # reuse when k > pool (evaluation of small pools)
-        sign = torch.randint(0, 2, (k, 1), generator=generator, device=self.dev, dtype=pool.dtype) * 2 - 1
-        return pool[idx] * sign
+        sign = torch.randint(0, 2, (k, 1), generator=generator, device=self.dev, dtype=pools[0].dtype) * 2 - 1
+        if hm:
+            return tuple(pl[idx] * sign for pl in pools)
+        return pools[0][idx] * sign
 
 
 def main():
@@ -119,7 +158,8 @@ def main():
     p.add_argument("--sims-train", default="10-49")
     p.add_argument("--sims-test", default="0-9")
     p.add_argument("--realizations", type=int, default=4)
-    p.add_argument("--loss", default="data=1,res=1,cross=1", help="weights of the terms data, res, cross")
+    p.add_argument("--loss", default="data=1,res=1,cross=1",
+                   help="weights of the terms data, res, cross and of the Delouis et al. (2022) terms l1, l2, l3")
     p.add_argument("--levels", type=int, default=None, help="default: down to nside 8")
     p.add_argument("--channels", default=None, help="comma-separated, one per level")
     p.add_argument("--conv", default="sphere", choices=["sphere", "faces"])
@@ -149,6 +189,9 @@ def main():
         return torch.as_tensor(np.load(os.path.join(a.data, f"planck353_{name}_n{a.nside}{tag}.npy")), device=dev)
 
     train_sky, test_sky = load(a.train_field), load(a.test_field)
+    a.halfmission = any(weights[t] for t in DELOUIS)
+    if a.halfmission:
+        T = torch.as_tensor(np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy")), device=dev)
     a.noise_rel_std = a.noise_rel * float(train_sky.std())
     noise = {f: Noise(a, f, s, load, dev) for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
     npix = 12 * a.nside**2
@@ -160,6 +203,12 @@ def main():
     many = NativeEngine(a.nside, j, batch=nb, backend="gpu", device=a.device)
     stats = Stats(many)
     loss_fn = DenoiseLoss(one.plan, a.nside, device=dev)
+    if a.halfmission:
+        # Pairs of the Delouis terms: targets S(d1,d2), S(d,u), S(T,d), then per
+        # realisation S(u+ñ1,u+ñ2), S(u+ñ,u), S(T,u+ñ).
+        xeng = NativeEngine(a.nside, j, batch=3 + 3 * B, backend="gpu", device=a.device, cross=True)
+        xrun = {"engine": xeng, "generation": 0}
+        xloss = DenoiseLoss(xeng.plan, a.nside, device=dev)
     nlev = int(math.log2(a.nside)) - 1
 
     def forward1(m):
@@ -169,8 +218,30 @@ def main():
     # Ergodic variances of the noise, for the `res` term (one training draw per field).
     noise_var = {f: forward1(n.draw(1)[0])[1] for f, n in noise.items()}
 
-    def losses(u, d, field, s_stats=None, generator=None, test=False):
-        """Terms of the loss for `u` `[npix]` (with gradient) and `d`."""
+    def delouis(u, d, d1, d2, field, generator=None, test=False):
+        """The three terms of Delouis et al. (2022) for `u` (with gradient) and
+        the observation (d, d1, d2), on the full sky."""
+        n, n1, n2 = noise[field].draw(B, test=test, generator=generator, hm=True)
+        A = torch.cat([d1[None], d[None], T[None], u + n1, u + n, T.expand(B, -1)])
+        Bm = torch.cat([d2[None], u[None], d[None], u + n2, u.expand(B, -1), u + n])
+        # order of the realisations: [l1 x B, l2 x B, l3 x B]
+        st = CrossStats.apply(A, Bm, xrun)
+        var = xrun["var"]
+        out = {}
+        for t, name in enumerate(DELOUIS):
+            target = st[t] if name == "l2" else st[t].detach()
+            out[name] = xloss(st[3 + t * B:3 + (t + 1) * B], target, var[t])
+        return out
+
+    def losses(u, d, field, s_stats=None, generator=None, test=False, hm=None):
+        """Terms of the loss for `u` `[npix]` (with gradient) and `d`; `hm`:
+        the half-mission observations (d1, d2) for the Delouis terms."""
+        if hm is not None:
+            out = delouis(u, d, hm[0], hm[1], field, generator=generator, test=test)
+            if weights["data"] == weights["res"] == weights["cross"] == 0:
+                return out
+        else:
+            out = {}
         target, tvar = forward1(d)
         n = noise[field].draw(B, test=test, generator=generator)
         parts = [u + n]
@@ -179,7 +250,7 @@ def main():
         if weights["res"]:
             parts += [n, (d - u)[None]]
         st = (s_stats or stats)(torch.cat(parts))
-        out, k = {"data": loss_fn(st[:B], target, tvar)}, B
+        out["data"], k = loss_fn(st[:B], target, tvar), B
         if weights["cross"]:
             out["cross"] = loss_fn(st[k:k + 1], target, tvar)
             k += 1
@@ -198,23 +269,30 @@ def main():
           f"(train std {float(train_sky.std()):.4g}, test std {float(test_sky.std()):.4g})", flush=True)
 
     gen = torch.Generator(device=dev).manual_seed(12345)
-    fixed = {f: (s, s + noise[f].draw(1, test=True, generator=gen)[0])
+    def observe(f, s, test=False, generator=None):
+        """(d, (d1, d2) or None): an observation of the sky s of field f."""
+        if not a.halfmission:
+            return s + noise[f].draw(1, test=test, generator=generator)[0], None
+        n, n1, n2 = noise[f].draw(1, test=test, generator=generator, hm=True)
+        return s + n[0], (s + n1[0], s + n2[0])
+
+    fixed = {f: (s, *observe(f, s, test=True, generator=gen))
              for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
 
     def evaluate(save=False):
         net.eval()
         out = {}
         with torch.no_grad():
-            for f, (s, d) in fixed.items():
+            for f, (s, d, hm) in fixed.items():
                 u = net(d[None], d.std())[0]
                 ts, tv = forward1(s)
                 us, _ = forward1(u)
                 ds, _ = forward1(d)
                 terms = {k: v.item() for k, v in losses(u, d, f, s_stats=lambda x: torch.as_tensor(
-                    as_real(many.forward(x.cpu().numpy())[0]), device=dev), generator=gen, test=True).items()}
+                    as_real(many.forward(x.cpu().numpy())[0]), device=dev), generator=gen, test=True, hm=hm).items()}
                 out[f] = {
                     "pixel_rms_error_over_noise": float((u - s).square().mean().sqrt()) / rms[f],
-                    "data_loss": terms["data"],
+                    "data_loss": terms.get("data", float("nan")),
                     "loss_terms": terms,
                     "stats_u_vs_sky": loss_fn.report(us, ts, tv),
                     "stats_d_vs_sky": loss_fn.report(ds, ts, tv),
@@ -238,9 +316,9 @@ def main():
     show(0, evals[0])
     started = time.time()
     for step in range(1, a.steps + 1):
-        d = train_sky + noise[a.train_field].draw(1)[0]
+        d, hm = observe(a.train_field, train_sky)
         u = net(d[None], d.std())[0]
-        terms = losses(u, d, a.train_field)
+        terms = losses(u, d, a.train_field, hm=hm)
         loss = sum(weights[k] * v for k, v in terms.items())
         opt.zero_grad(set_to_none=True)
         loss.backward()
