@@ -285,6 +285,8 @@ def main():
                 if save:
                     np.savez(os.path.join(a.out, f"eval_{f}.npz"), sky=s.cpu().numpy(), d=d.cpu().numpy(), u=u.cpu().numpy())
         net.train()
+        if dev.type == "cuda":
+            torch.cuda.empty_cache()  # the full-sky pass must not starve the engine's geometry cache
         return out
 
     def show(step, ev):
