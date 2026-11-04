@@ -400,8 +400,9 @@ def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta):
     weighted terms of `--loss`, exactly as in training.  Its noise
     realisations are drawn from the training simulations with a seed fixed
     within a round (the loss is then deterministic for the line search) and
-    changed between rounds, as the biases of Delouis et al. (2022) are
-    re-estimated between batches of iterations.  Every round ends with an
+    changed between rounds.  No noise bias is frozen (unlike Delouis et al.
+    2022): Phi(u + n_i) is recomputed at the current u at every evaluation,
+    with the gradient through it.  Every round ends with an
     evaluation; the last one writes eval_{field}.npz."""
     from stl_port.native import native_lbfgs
 

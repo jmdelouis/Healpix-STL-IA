@@ -43,7 +43,7 @@ where $\sigma_d$ is the standard deviation of $d$, or a fixed scale for patch tr
 
 - **Optimiser.** The native L-BFGS of STL-Dev-MPI (`stl_port.native.native_lbfgs`, strong-Wolfe line search), on $u/\mathrm{std}(d)$, which is of order one.
 - **Objective.** The sum over the fixed observations of both fields of the weighted terms of `--loss`, exactly as in training.
-- **Noise realisations.** They are drawn from the training simulations. Their seed is fixed within a round, so that the loss is deterministic for the line search, and changes between the `--lbfgs-rounds` rounds of `--lbfgs-iter` iterations. The noise biases are thus re-estimated between batches of iterations, as in the original method.
+- **Noise realisations.** They are drawn from the training simulations. Their seed is fixed within a round, so that the loss is deterministic for the line search, and changes between the `--lbfgs-rounds` rounds of `--lbfgs-iter` iterations. Unlike the original method, no noise bias is frozen: $\Phi(u+n_i)$ is recomputed at the current $u$ at every evaluation, and the gradient goes through it.
 - **Evaluation.** Every round ends with the same evaluation as a training run, so the two can be compared directly in `train.json`.
 
 ## The losses of Delouis et al. (2022)
