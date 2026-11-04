@@ -5,8 +5,8 @@ Every run writes to its `--out` directory:
 | file | content |
 |---|---|
 | `log` | the command-line summary, one line every `--log-every` steps (loss terms, time per step), and the evaluations |
-| `train.json` | the arguments, the number of coefficients and parameters, the time, the loss history and every evaluation |
-| `model.pt` | the network weights and configuration, saved at every evaluation |
+| `train.json` | the arguments, the number of coefficients and parameters, the time, the loss history and every evaluation (with `--optimizer lbfgs`: per round, the number of loss evaluations and the loss at its start and end) |
+| `model.pt` | the network weights and configuration, saved at every evaluation (not written with `--optimizer lbfgs`) |
 | `eval_Q.npz`, `eval_U.npz` | the maps of the final evaluation: `sky`, `d`, `u` (NESTED). With `--real`, `sky` is `d` |
 
 ## Evaluations

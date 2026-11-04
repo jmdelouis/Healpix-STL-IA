@@ -37,11 +37,15 @@ runs)
         --log-every 20 --eval-every 500
     # Sect. 5: the PR3 maps themselves
     gpu r256_dl123 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 $common
+    # the reference: the same losses minimised over the pixels of u with the L-BFGS of STL-Dev-MPI
+    gpu l256_dl123 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --realizations 4 --optimizer lbfgs \
+        --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0 --log-every 50 --eval-every 500
     ;;
 figures)
     $PY scripts/make_figures.py $R/runs $R/runs/figs64
     $PY scripts/make_figures256.py $R/runs $R/runs/figs256
     $PY scripts/make_figures_real.py $R/runs/r256_dl123 $R/data/maps $R/runs/figs_real
+    $PY scripts/make_figures_real.py $R/runs/l256_dl123 $R/data/maps $R/runs/figs_lbfgs
     ls $R/runs/figs64 $R/runs/figs256 $R/runs/figs_real
     ;;
 *)

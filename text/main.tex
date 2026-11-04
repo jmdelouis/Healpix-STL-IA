@@ -76,6 +76,10 @@ A first version of the network used $3\times3$ planar convolutions on the twelve
 
 The statistics come from the Rust engine of STL-Dev-MPI through a PyTorch \citep{paszke2019} autograd function: the forward pass returns $\Phi(u+n_i)$ in double precision, and the backward pass returns the exact gradient with respect to the maps from the pyramidal reverse sweep of the library. The network runs in single precision and the statistics in double precision.
 
+\subsection{Per-map reference}\label{sec:lbfgs}
+
+The amortised denoiser is compared with the method it replaces: the same loss minimised over the pixels of $u$, for one observation, without a network. We start from $u=d$ and use the native L-BFGS of STL-Dev-MPI (strong-Wolfe line search) on $u/{\rm std}(d)$. The objective is the sum, over the observations of the two fields, of exactly the weighted loss terms of the network run it is compared with, computed by the same code. The noise realisations are drawn from the training simulations. They are fixed within a round of $50$ iterations, so that the loss is deterministic for the line search, and redrawn between the ten rounds; this re-estimates the noise biases between batches of iterations, as in \citet{delouis2022}. The evaluation after each round is the one of the network runs.
+
 \subsection{Data and protocol}
 
 The sky is the \textit{Planck} PR3 353\,GHz full-mission polarisation map \citep[PSB detectors;][]{planck2020hfi}, in $\mu{\rm K}_{\rm CMB}$, degraded to $\nside=64$ by NESTED parent means. Its $Q$ and $U$ maps have standard deviations of 247 and 126\,$\mu$K. We consider two noise models, both white:
@@ -231,7 +235,7 @@ Every run, figure and table of this paper can be rebuilt from public data on any
   \item \texttt{scripts/build\_bridge.slurm}: build of the engine (10\,min);
   \item \texttt{scripts/download\_planck.sh 50}: the PR3 353\,GHz PSB full- and half-mission maps, the 857\,GHz map, and 50 FFP10 noise simulations of each of the three 353\,GHz maps from the Planck Legacy Archive (60\,GB);
   \item \texttt{scripts/prepare\_data.slurm}: NESTED parent means at $\nside=256$, 128 and 64, in $\mu{\rm K}_{\rm CMB}$ (3\,h on 4 cores);
-  \item \texttt{scripts/reproduce.sh runs}: the runs of Sects.~3 and \ref{sec:n256} and the denoising of the PR3 maps, each with its exact options (seed 0, 3000 steps; 10\,min per $\nside=64$ run and 0.8 to 2.8\,h per $\nside=256$ run on one A100, 2.8\,h on 32 cores for the CPU patch run);
+  \item \texttt{scripts/reproduce.sh runs}: the runs of Sects.~3 and \ref{sec:n256} and the denoising of the PR3 maps by the network and by the per-map L-BFGS reference of Sect.~\ref{sec:lbfgs} (\texttt{--optimizer lbfgs}), each with its exact options (seed 0, 3000 steps for the networks, 10 rounds of 50 iterations for L-BFGS; 10\,min per $\nside=64$ run and 0.8 to 2.8\,h per $\nside=256$ run on one A100, 2.8\,h on 32 cores for the CPU patch run);
   \item \texttt{scripts/reproduce.sh figures}: all figures and tables.
 \end{enumerate}
 Each run writes its arguments, loss history and evaluations to \texttt{train.json}. The GPU runs are not bit-reproducible (atomic sums); a rerun agrees with Tables~\ref{tab:results} and \ref{tab:n256} to about 0.02 in pixel error and 20\% on the families of statistics. A five-minute smoke test (Sect.~4 of the recipe) checks the installation before the long runs; the environment, the engine and the smoke test of the recipe were replayed in a fresh directory on the T4 test machine.

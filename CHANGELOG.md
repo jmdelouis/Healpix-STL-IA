@@ -5,6 +5,10 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 ## Unreleased
 
 ### Added
+- **L-BFGS reference.** `stlia-train-denoise --optimizer lbfgs` uses no network: it minimises the training losses directly over the pixels of `u`, with the native L-BFGS of STL-Dev-MPI (`native_lbfgs`, strong-Wolfe line search). This is the per-map method of Delouis et al. (2022).
+  - New options: `--lbfgs-rounds`, `--lbfgs-iter`, `--lbfgs-history`. The noise realisations are fixed within a round and redrawn between rounds.
+  - The run `l256_dl123` is added to `scripts/reproduce.sh`.
+  - Documentation updated: method (*The per-map reference*), user guide (*The L-BFGS reference*, outputs), `REPRODUCE.md`, and the paper (Sect. 2.3, "Per-map reference", and appendix).
 - **Package.** The repository is now an installable package, `healpix-stl-ia`:
   - `pyproject.toml`, with commands `stlia-train-denoise` and `stlia-train-patches`;
   - the training programs move to `stlia.train_denoise` and `stlia.train_patches`, and `train_denoise.py` and `train_patches.py` stay as thin wrappers.

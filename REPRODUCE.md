@@ -146,7 +146,7 @@ tail -3 $R/runs/smoke/log
 bash scripts/reproduce.sh runs
 ```
 
-This submits the 10 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
+This submits the 11 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
 
 - `log`;
 - `train.json`, which holds the arguments, the loss history and the evaluations;
@@ -160,6 +160,7 @@ This submits the 10 runs listed in the script, which are independent of one anot
 | `n256_delouis` | Sect. 4, Table 2 | GPU | 2 h 20 |
 | `p256_l123` | Sect. 4, Table 2 | 32 CPU cores | 2 h 50 |
 | `r256_dl123` | the PR3 maps denoised | GPU | 2 h 50 |
+| `l256_dl123` | the PR3 maps denoised without a network: the same losses minimised over the pixels by the L-BFGS of STL-Dev-MPI (reference) | GPU | about 1.5 h (estimate) |
 
 `p256_l123` can instead use the GPU disc engine, with the same options:
 

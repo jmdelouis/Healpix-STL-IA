@@ -37,6 +37,15 @@ $$u = d - \sigma_d\, r_\theta(d/\sigma_d),$$
 
 where $\sigma_d$ is the standard deviation of $d$, or a fixed scale for patch training. The last layer of $r_\theta$ starts at zero, so an untrained network is the identity.
 
+## The per-map reference: L-BFGS without a network
+
+`stlia-train-denoise --optimizer lbfgs` keeps the data, the losses and the evaluation of a training, but drops the network. It minimises the loss directly over the pixels of $u$, one map per field, starting from $u = d$. This is the per-map method of Delouis et al. (2022), and the reference the amortised network should approach.
+
+- **Optimiser.** The native L-BFGS of STL-Dev-MPI (`stl_port.native.native_lbfgs`, strong-Wolfe line search), on $u/\mathrm{std}(d)$, which is of order one.
+- **Objective.** The sum over the fixed observations of both fields of the weighted terms of `--loss`, exactly as in training.
+- **Noise realisations.** They are drawn from the training simulations. Their seed is fixed within a round, so that the loss is deterministic for the line search, and changes between the `--lbfgs-rounds` rounds of `--lbfgs-iter` iterations. The noise biases are thus re-estimated between batches of iterations, as in the original method.
+- **Evaluation.** Every round ends with the same evaluation as a training run, so the two can be compared directly in `train.json`.
+
 ## The losses of Delouis et al. (2022)
 
 `stlia-train-denoise --loss` combines weighted terms. Besides `data`, it implements the three cross-statistics terms of Delouis et al. (2022). Each is a reduced $\chi^2$ of the same form, with $\Phi(a, b)$ the cross scattering covariances of the engine and $\tilde n$ fresh noise draws:

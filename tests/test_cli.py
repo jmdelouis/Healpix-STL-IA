@@ -18,3 +18,10 @@ def test_train_patches_defaults():
     a = train_patches.parser().parse_args(["--data", "D", "--out", "O"])
     assert (a.nside, a.j, a.radius, a.core, a.patches, a.stl_backend) == (256, 4, 10.0, 4.0, 16, "cpu")
     assert a.cache_bytes is None and a.reserve_bytes is None
+
+
+def test_train_denoise_lbfgs_options():
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O"])
+    assert (a.optimizer, a.lbfgs_rounds, a.lbfgs_iter, a.lbfgs_history) == ("adam", 10, 50, 10)
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--optimizer", "lbfgs", "--lbfgs-rounds", "3"])
+    assert a.optimizer == "lbfgs" and a.lbfgs_rounds == 3

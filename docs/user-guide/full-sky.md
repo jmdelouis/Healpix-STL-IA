@@ -46,6 +46,19 @@ Keep the `data` term: it constrains the mean and the variance, which the cross s
 - the BICEP2 field;
 - the EE and BB spectra over $|b| > 30^\circ$. On these spectra, the half-mission cross spectrum $d_1 \times d_2$, free of noise bias, is the reference for $u$.
 
+## The L-BFGS reference
+
+The same command, with `--optimizer lbfgs`, minimises the same losses over the pixels of $u$ without a network, using the native L-BFGS of STL-Dev-MPI (see {doc}`../method`). Run it with the options of the network run it is compared with:
+
+```bash
+stlia-train-denoise --data maps --out runs/lbfgs256 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 \
+    --realizations 4 --optimizer lbfgs --lbfgs-rounds 10 --lbfgs-iter 50
+```
+
+It writes the same files as a training run, except `model.pt`: `log`, `train.json` (one evaluation per round) and `eval_{Q,U}.npz` (with `u` the optimised maps), so `scripts/make_figures_real.py` draws its figures too.
+
+On a T4, at $N_{\rm side}=256$ with 2 realisations, one evaluation of the loss for both fields takes about 23 s; 8 iterations bring the loss from 13.9 to 2.6.
+
 ## Resources
 
 Measured times per step:

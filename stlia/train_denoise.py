@@ -186,6 +186,13 @@ def parser():
     p.add_argument("--seed", type=int, default=0, help="seed of torch and numpy")
     p.add_argument("--log-every", type=int, default=10, help="steps between two log lines")
     p.add_argument("--eval-every", type=int, default=250, help="steps between two evaluations (and checkpoints)")
+    p.add_argument("--optimizer", default="adam", choices=["adam", "lbfgs"],
+                   help="adam: train the U-Net; lbfgs: no network, minimise the same losses over the pixels of u "
+                        "for the fixed observations (the per-map method of Delouis et al. 2022, the reference)")
+    p.add_argument("--lbfgs-rounds", type=int, default=10,
+                   help="lbfgs: rounds; the noise realisations are redrawn between rounds and fixed within one")
+    p.add_argument("--lbfgs-iter", type=int, default=50, help="lbfgs: L-BFGS iterations per round")
+    p.add_argument("--lbfgs-history", type=int, default=10, help="lbfgs: L-BFGS history size")
     return p
 
 
@@ -311,12 +318,13 @@ def main(argv=None):
                  for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
     fields = list(fixed)
 
-    def evaluate(save=False):
+    def evaluate(save=False, outputs=None):
+        """Evaluate the network, or the maps `outputs[field]` (L-BFGS)."""
         net.eval()
         out = {}
         with torch.no_grad():
             for f, (s, d, hm) in fixed.items():
-                u = net(d[None], d.std())[0]
+                u = net(d[None], d.std())[0] if outputs is None else outputs[f]
                 ts, tv = forward1(s)
                 us, _ = forward1(u)
                 ds, _ = forward1(d)
@@ -342,6 +350,10 @@ def main(argv=None):
             terms = " ".join(f"{k} {v:.4g}" for k, v in e["loss_terms"].items())
             print(f"eval {step} {f}: pixel err/noise {e['pixel_rms_error_over_noise']:.3f} {terms} "
                   f"| u/d vs sky [sigma]: {fam}", flush=True)
+
+    if a.optimizer == "lbfgs":
+        return run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev,
+                         {"j": j, "coefficients": len(one.plan), "noise_rms": rms})
 
     hist = {"step": [], "loss": [], **{t: [] for t in TERMS}}
     evals = {0: evaluate()}
@@ -377,6 +389,67 @@ def main(argv=None):
         json.dump({"args": vars(a), "j": j, "coefficients": len(one.plan), "parameters": nparams, "noise_rms": rms,
                    "loss_weights": weights, "seconds": time.time() - started, "loss_history": hist,
                    "evals": evals}, f, indent=1)
+
+
+def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta):
+    """The reference without a network: minimise the training losses over the
+    pixels of u, one map per field, with the native L-BFGS of STL-Dev-MPI
+    (strong-Wolfe line search), starting from u = d.
+
+    The loss is the sum over the fixed observations (both fields) of the
+    weighted terms of `--loss`, exactly as in training.  Its noise
+    realisations are drawn from the training simulations with a seed fixed
+    within a round (the loss is then deterministic for the line search) and
+    changed between rounds, as the biases of Delouis et al. (2022) are
+    re-estimated between batches of iterations.  Every round ends with an
+    evaluation; the last one writes eval_{field}.npz."""
+    from stl_port.native import native_lbfgs
+
+    # The optimiser works on u / std(d), of order one like the input of the network: in uK the
+    # first L-BFGS step (lr / |g|_1) is far too short at nside 256.
+    scale = np.array([float(fixed[f][1].std()) for f in fields])[:, None]
+    x = np.stack([fixed[f][1].detach().cpu().numpy() for f in fields]).astype(np.float64) / scale
+    options = {"max_iter": a.lbfgs_iter, "history_size": a.lbfgs_history}
+    hist = {"round": [], "evaluations": [], "loss_start": [], "loss_end": [], **{t: [] for t in TERMS}}
+    evals = {0: evaluate(outputs={f: fixed[f][1] for f in fields})}
+    show(0, evals[0])
+    started = time.time()
+    for rnd in range(1, a.lbfgs_rounds + 1):
+        seed = 1000003 * (a.seed + 1) + rnd
+        last = {}
+
+        def objective(trial):
+            u = torch.tensor(np.array(trial) * scale, device=dev, requires_grad=True)
+            total, parts = 0.0, {}
+            for i, f in enumerate(fields):
+                _, d, hm = fixed[f]
+                g = torch.Generator(device=dev).manual_seed(seed + i)  # the same draws at every evaluation of the round
+                terms = losses(u[i], d, f, generator=g, hm=hm)
+                loss_f = sum(weights[k] * v for k, v in terms.items())
+                loss_f.backward()  # per field: the engine keeps one forward state at a time
+                total += loss_f.item()
+                for k, v in terms.items():
+                    parts[k] = parts.get(k, 0.0) + v.item()
+            last.update(parts)
+            return total, u.grad.detach().cpu().numpy() * scale
+
+        x, info = native_lbfgs(objective, x, options)
+        h = info["loss_history"]
+        hist["round"].append(rnd)
+        hist["evaluations"].append(info["evaluations"])
+        hist["loss_start"].append(h[0])
+        hist["loss_end"].append(min(h))
+        for t in TERMS:
+            hist[t].append(last.get(t))
+        print(f"round {rnd} evaluations {info['evaluations']} loss {h[0]:.6g} -> {min(h):.6g} "
+              + " ".join(f"{k} {v:.4g}" for k, v in last.items())
+              + f" {(time.time() - started) / rnd:.1f} s/round", flush=True)
+        evals[rnd] = evaluate(save=rnd == a.lbfgs_rounds,
+                              outputs={f: torch.as_tensor(x[i] * scale[i], device=dev) for i, f in enumerate(fields)})
+        show(rnd, evals[rnd])
+    with open(os.path.join(a.out, "train.json"), "w") as fh:
+        json.dump({"args": vars(a), **meta, "optimizer": "native STL L-BFGS (strong Wolfe)", "loss_weights": weights,
+                   "seconds": time.time() - started, "loss_history": hist, "evals": evals}, fh, indent=1)
 
 
 if __name__ == "__main__":
