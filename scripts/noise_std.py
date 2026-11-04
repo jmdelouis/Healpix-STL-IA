@@ -4,8 +4,7 @@
 
 Every simulation is degraded like the sky (`prepare_planck.py`: NESTED, uK_CMB,
 parent means) and saved as OUTDIR/planck353_{name}_{I,Q,U}_n{nside}_mc{k}.npy,
-`k` the rank of the file in the argument list (pass them sorted by
-realisation); the per-pixel standard deviation over the simulations
+`k` the realisation number read from the file name (`mc_000NN`); the per-pixel standard deviation over the simulations
 (ddof = 1) is saved as OUTDIR/planck353_{name}_std_{I,Q,U}_n{nside}.npy.
 Names used: noise (full mission), noisehm1 / noisehm2 (half missions).  Degrading the simulations
 before taking the std keeps the pixel-to-pixel correlations of the PR3 noise
@@ -14,6 +13,7 @@ in the level of the degraded pixels.
 
 import argparse
 import os
+import re
 
 import healpy as hp
 import numpy as np
@@ -28,14 +28,19 @@ def main():
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
     acc = {}
-    for k, path in enumerate(a.sims):
+    for path in a.sims:
+        k = int(re.search(r"mc_(\d+)", os.path.basename(path)).group(1))
         maps = hp.read_map(path, field=(0, 1, 2), nest=True, dtype=np.float64)
         for name, m in zip("IQU", maps):
-            m = m * 1e6
-            assert np.isfinite(m).all() and not (m == hp.UNSEEN * 1e6).any(), f"{path} {name}: unseen pixels"
+            # Unseen pixels (half-mission simulations): parent mean over the seen children only.
+            w = (np.isfinite(m) & (m != hp.UNSEEN)).astype(np.float64)
+            m = np.where(w > 0, m * 1e6, 0.0)
             for nside in sorted(a.nside, reverse=True):
                 while m.size > 12 * nside * nside:
-                    m = m.reshape(-1, 4).mean(1)
+                    mw, w = (m * w).reshape(-1, 4).sum(1), w.reshape(-1, 4).sum(1)
+                    m = np.where(w > 0, mw / np.maximum(w, 1e-300), 0.0)
+                    w = (w > 0).astype(np.float64)
+                assert w.all(), f"{path} {name}: {int((w == 0).sum())} pixels without seen child at nside {nside}"
                 np.save(os.path.join(a.out, f"planck353_{a.name}_{name}_n{nside}_mc{k}.npy"), m)
                 s, s2 = acc.get((name, nside), (0.0, 0.0))
                 acc[(name, nside)] = (s + m, s2 + m * m)
