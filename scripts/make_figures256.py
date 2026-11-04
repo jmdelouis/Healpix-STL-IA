@@ -96,6 +96,29 @@ def maps_figure(runs, out):
     plt.close(fig)
 
 
+BICEP2 = (316.0, -58.5)  # galactic (l, b) of the centre of the BICEP2 field (RA 0h, Dec -57.5 deg)
+
+
+def bicep_figure(runs, out, reso=6.0, xsize=320):
+    """Gnomonic views (32 deg) of the BICEP2 field: sky, observation and outputs."""
+    done = [(n, lab) for n, lab in RUNS if runs[n][1] is not None]
+    ncol = 2 + len(done)
+    fig = plt.figure(figsize=(3.2 * ncol, 7.2))
+    for row, f in enumerate(("Q", "U")):
+        m0 = runs[done[0][0]][1][f]
+        panels = [(m0["sky"], f"sky {f}"), (m0["d"], "observation $d$")]
+        panels += [(runs[n][1][f]["u"], "$u$: " + lab) for n, lab in done]
+        view = hp.gnomview(m0["sky"], nest=True, rot=BICEP2, reso=reso, xsize=xsize, return_projected_map=True,
+                           no_plot=True)
+        v = np.percentile(np.abs(view), 99)
+        for col, (m, title) in enumerate(panels):
+            hp.gnomview(m, nest=True, rot=BICEP2, reso=reso, xsize=xsize, fig=fig.number,
+                        sub=(2, ncol, row * ncol + col + 1), title=title, min=-v, max=v, cmap="RdBu_r",
+                        notext=True, unit=r"$\mu$K")
+    fig.savefig(os.path.join(out, "bicep256.pdf"), bbox_inches="tight")
+    plt.close(fig)
+
+
 def evol_figure(runs, out):
     fig, axes = plt.subplots(2, 3, figsize=(12, 6), sharex=True)
     for row, f in enumerate(("Q", "U")):
@@ -130,6 +153,7 @@ def main():
     runs = {name: load(src, name) for name, _ in RUNS}
     table(runs, out)
     maps_figure(runs, out)
+    bicep_figure(runs, out)
     evol_figure(runs, out)
 
 
