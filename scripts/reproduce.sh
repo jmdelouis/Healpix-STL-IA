@@ -45,6 +45,9 @@ runs)
     gpu r256_fz --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --bias frozen --bias-realizations 40 --bias-every 50 $common
     gpu r256_fz_cl857 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --cond log857 --bias frozen --bias-realizations 40 --bias-every 50 $common
     gpu l256_fz_cl --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --realizations 4         --optimizer lbfgs --bias frozen --bias-realizations 40 --bias-every 50 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
+    # live biases with the spectrum loss: the cross spectrum is unbiased in either scheme
+    gpu r256_cl857 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --cond log857 $common
+    gpu l256_cl --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --realizations 4         --optimizer lbfgs --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     # masked statistics (STL-Dev-MPI >= 9038114, built in $R/stl_mk: STL=stl_mk)
     STL=stl_mk gpu r256_fz_cl857_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45         --stat-masks 0,20,30,45 --cond log857 --bias frozen --bias-realizations 40 --bias-every 50 $common
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
@@ -54,7 +57,7 @@ figures)
     $PY scripts/make_figures256.py $R/runs $R/runs/figs256
     $PY scripts/make_figures_real.py $R/runs/r256_dl123 $R/data/maps $R/runs/figs_real
     $PY scripts/make_figures_real.py $R/runs/l256_dl123 $R/data/maps $R/runs/figs_lbfgs
-    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_fz_cl857_mk l256_fz_mk; do
+    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_fz_cl857_mk l256_fz_mk; do
         $PY scripts/make_figures_real.py $R/runs/$r $R/data/maps $R/runs/figs_$r
     done
     ls $R/runs/figs64 $R/runs/figs256 $R/runs/figs_real
