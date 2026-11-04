@@ -72,7 +72,10 @@ stlia-train-denoise --data maps --out runs/real256_fz --nside 256 --real     --l
 stlia-train-denoise --data maps --out runs/lbfgs256_fz --nside 256 --real     --loss data=1,l1=1,l2=1,l3=1,cl=1 --bias frozen --optimizer lbfgs
 ```
 
-`--cond log857` reads `planck857_I_n<nside>.npy`, which is already needed by `l3`. The spectrum loss keeps its Legendre tables on the GPU: about 2 GB at $N_{m side}=256$, $\ell_{\max}=511$, in double precision.
+Add `--stat-masks 0,20,30,45` to average every scattering statistic under the four galactic masks as well. This needs STL-Dev-MPI 9038114 or later; see {doc}`../installation`.
+
+`--cond log857` reads `planck857_I_n<nside>.npy`, which is already needed by `l3`. The spectrum loss keeps its Legendre tables on the GPU: about 2 GB at $N_{
+m side}=256$, $\ell_{\max}=511$, in double precision.
 
 ## Resources
 

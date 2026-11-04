@@ -5,6 +5,9 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 ## Unreleased
 
 ### Added
+- **Masked statistics.** `--stat-masks` averages every scattering coefficient of the terms under galactic masks, each with its ergodic weight. It uses the masked averages of the STL-Dev-MPI engine (commit 9038114, `NativeEngine(masks=...)`), and `DenoiseLoss` gains the `masks` and `npix` arguments.
+  - The runs `r256_fz_cl857_mk` and `l256_fz_mk` are added.
+  - Documentation updated: method (*Masked statistics*), user guide, installation, `REPRODUCE.md`, paper Sect. 2.4.
 - **Frozen noise biases.** `--bias frozen` implements the scheme of Delouis et al. (2022): the bias of each term is estimated at a fixed `u` with `--bias-realizations` draws and kept constant (re-estimated every L-BFGS round, or every `--bias-every` network steps), and the model is `Phi(u) + B`. The default, `--bias live`, keeps the previous behaviour.
 - **Spectrum loss `cl`.** A binned half-mission cross spectrum under galactic masks (`--cl-masks`, `--cl-lmin`, `--cl-lmax`, `--cl-width`, `--cl-apod`). It comes with the modules `stlia.sht` and `stlia.spectra`: a differentiable ring-FFT spherical harmonic transform and `anafast`, adapted from healpix-analyse and FOSCAT and tested against healpy, and binned masked spectra. The optional extra `spin` covers the E/B transforms.
 - **Conditioning maps.** `UNet(cond=...)` and `stlia-train-denoise --cond log857`: the network receives log I_857 at its input and at every decoder level.

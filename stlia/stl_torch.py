@@ -30,19 +30,20 @@ class StatsFunction(torch.autograd.Function):
     """Autograd function of the STL engine: auto statistics of a batch of maps.
 
     Forward: ``engine.forward`` of `x` `[B, npix]` -> `[B, ncoeff, 2]` (real and
-    imaginary parts, float64).  Backward: ``engine.vjp`` with the same
+    imaginary parts, float64); with K masks the engine returns `[B, K, ncoeff]`,
+    flattened here to `[B, K ncoeff, 2]`.  Backward: ``engine.vjp`` with the same
     `generation`, the exact gradient of the pyramidal reverse sweep."""
 
     @staticmethod
     def forward(ctx, x, engine, generation):
         values, _ = engine.forward(x.detach().cpu().numpy(), generation=generation)
-        ctx.engine, ctx.generation, ctx.device = engine, generation, x.device
-        out = values.view(np.float64).reshape(values.shape + (2,))
+        ctx.engine, ctx.generation, ctx.device, ctx.shape = engine, generation, x.device, values.shape
+        out = values.view(np.float64).reshape(values.shape + (2,)).reshape(values.shape[0], -1, 2)
         return torch.from_numpy(out.copy()).to(x.device)
 
     @staticmethod
     def backward(ctx, g):
-        g = g.detach().cpu().numpy()
+        g = g.detach().cpu().numpy().reshape(ctx.shape + (2,))
         grad = ctx.engine.vjp(g[..., 0] + 1j * g[..., 1], generation=ctx.generation)
         return torch.from_numpy(grad).to(ctx.device), None, None
 
@@ -88,9 +89,14 @@ class DenoiseLoss:
     device : str or torch.device
         Device of the weights."""
 
-    def __init__(self, plan, nside, device="cpu"):
+    def __init__(self, plan, nside, device="cpu", masks=1, npix=None):
+        """`masks` > 1: statistics of K masks flattened mask-major (`[K ncoeff]`),
+        with `npix` `[K, ncoeff]` the pixels averaged by each coefficient
+        (``NativeEngine.native_pixels()``)."""
+        plan = list(plan) * masks
         self.n = len(plan)
-        self.npix = torch.as_tensor(native_pixels(plan, nside), device=device)
+        npix = native_pixels(plan, nside) if npix is None else np.asarray(npix, dtype=np.float64).ravel()
+        self.npix = torch.as_tensor(npix, device=device)
         self.family = np.array([c["family"] for c in plan])
 
     def weights(self, target_var):

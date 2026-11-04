@@ -90,13 +90,14 @@ class CrossStats(torch.autograd.Function):
         g = run["generation"]
         values, var = run["engine"].forward_cross(a.detach().cpu().numpy(), b.detach().cpu().numpy(),
                                                   generation=g, moments=True)
-        run["var"] = torch.as_tensor(var, device=a.device)
-        ctx.run, ctx.g, ctx.device = run, g, a.device
-        return torch.from_numpy(as_real(values).copy()).to(a.device)
+        n = values.shape[0]  # with K masks: [N, K, ncoeff], flattened to [N, K ncoeff]
+        run["var"] = torch.as_tensor(var, device=a.device).reshape(n, -1)
+        ctx.run, ctx.g, ctx.device, ctx.shape = run, g, a.device, values.shape
+        return torch.from_numpy(as_real(values).reshape(n, -1, 2).copy()).to(a.device)
 
     @staticmethod
     def backward(ctx, grad):
-        cot = grad.detach().cpu().numpy()
+        cot = grad.detach().cpu().numpy().reshape(ctx.shape + (2,))
         ga, gb = ctx.run["engine"].vjp_cross(cot[..., 0] + 1j * cot[..., 1], generation=ctx.g)
         return torch.from_numpy(np.ascontiguousarray(ga)).to(ctx.device),             torch.from_numpy(np.ascontiguousarray(gb)).to(ctx.device), None
 
@@ -176,6 +177,10 @@ def parser():
     p.add_argument("--loss", default="data=1,res=1,cross=1",
                    help="weights of the terms data, res, cross, of the Delouis et al. (2022) terms l1, l2, l3, "
                         "and of the binned half-mission cross spectrum cl")
+    p.add_argument("--stat-masks", default=None,
+                   help="scattering statistics averaged under galactic masks: latitude cuts b0 in degrees, "
+                        "comma-separated, each mask keeping abs(b) > b0 (0: full sky); every coefficient then "
+                        "enters once per mask, with its own ergodic weight (STL-Dev-MPI >= 9038114)")
     p.add_argument("--cl-masks", default="0,30,45",
                    help="cl: galactic latitude cuts b0 in degrees, comma-separated: the masks keep abs(b) > b0 (0: full sky)")
     p.add_argument("--cl-lmin", type=int, default=10, help="cl: first multipole")
@@ -259,21 +264,29 @@ def main(argv=None):
     # Batch of the engine: u + n_i, then 2u - d (cross), then n_i and d - u (res).
     nb = B + (1 if weights["cross"] else 0) + (B + 1 if weights["res"] else 0)
 
-    one = NativeEngine(a.nside, j, batch=1, backend="gpu", device=a.device)
-    many = NativeEngine(a.nside, j, batch=nb, backend="gpu", device=a.device)
+    mk = {}
+    if a.stat_masks:
+        # masked averages of the full-sky statistics (STL-Dev-MPI >= 9038114): K sets of coefficients
+        from stlia.spectra import galactic_mask
+        cuts = [float(b) for b in a.stat_masks.split(",")]
+        mk = {"masks": [np.flatnonzero(galactic_mask(a.nside, b, apod=0) > 0.5) for b in cuts]}
+    one = NativeEngine(a.nside, j, batch=1, backend="gpu", device=a.device, **mk)
+    many = NativeEngine(a.nside, j, batch=nb, backend="gpu", device=a.device, **mk)
     stats = Stats(many)
-    loss_fn = DenoiseLoss(one.plan, a.nside, device=dev)
+    K = len(mk.get("masks", [None]))
+    loss_fn = DenoiseLoss(one.plan, a.nside, device=dev, masks=K, npix=one.native_pixels() if mk else None)
     if a.halfmission:
         # Pairs of the Delouis terms: targets S(d1,d2), S(d,u), S(T,d), then per
         # realisation S(u+ñ1,u+ñ2), S(u+ñ,u), S(T,u+ñ).
-        xeng = NativeEngine(a.nside, j, batch=3 + 3 * B, backend="gpu", device=a.device, cross=True)
+        xeng = NativeEngine(a.nside, j, batch=3 + 3 * B, backend="gpu", device=a.device, cross=True, **mk)
         xrun = {"engine": xeng, "generation": 0}
-        xloss = DenoiseLoss(xeng.plan, a.nside, device=dev)
+        xloss = DenoiseLoss(xeng.plan, a.nside, device=dev, masks=K, npix=xeng.native_pixels() if mk else None)
     nlev = int(math.log2(a.nside)) - 1
 
     def forward1(m):
         v, var = one.forward(m.detach().cpu().numpy()[None], moments=True)
-        return torch.as_tensor(as_real(v[0]), device=dev), torch.as_tensor(var[0], device=dev)
+        return (torch.as_tensor(as_real(v[0]).reshape(-1, 2), device=dev),
+                torch.as_tensor(var[0], device=dev).reshape(-1))
 
     # Ergodic variances of the noise, for the `res` term (one training draw per field).
     noise_var = {f: forward1(n.draw(1)[0])[1] for f, n in noise.items()}
@@ -440,7 +453,7 @@ def main(argv=None):
                 us, _ = forward1(u)
                 ds, _ = forward1(d)
                 terms = {k: v.item() for k, v in losses(u, d, f, s_stats=lambda x: torch.as_tensor(
-                    as_real(many.forward(x.cpu().numpy())[0]), device=dev), generator=gen, test=True, hm=hm).items()}
+                    as_real(many.forward(x.cpu().numpy())[0]).reshape(len(x), -1, 2), device=dev), generator=gen, test=True, hm=hm).items()}
                 out[f] = {
                     "pixel_rms_error_over_noise": float((u - s).square().mean().sqrt()) / rms[f],
                     "data_loss": terms.get("data", float("nan")),

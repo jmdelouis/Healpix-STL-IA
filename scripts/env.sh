@@ -24,7 +24,7 @@ export R
 export STL=${STL:-stl}
 export G=$R/$STL
 export CARGO_TARGET_DIR=$G/target
-export STL_NATIVE_LIBRARY=${STL_NATIVE_LIBRARY:-$G/target/release/libstl_bridge.so}
+export STL_NATIVE_LIBRARY=$G/target/release/libstl_bridge.so  # follows STL, also when re-sourced in a job
 export PYTHONPATH=$R/src:$G/src/python/stl_ensemble${PYTHONPATH:+:$PYTHONPATH}
 export MPLCONFIGDIR=${MPLCONFIGDIR:-$R/runs/.mpl}
 export PY=${PY:-python3}

@@ -38,6 +38,8 @@ export CUDARC_CUDA_VERSION=12080      # CUDA version of the driver, from nvidia-
 cd stl/src && cargo build --release -p stl-bridge --features gpu
 ```
 
+The masked statistics (`--stat-masks`) need commit `9038114` (branch `claude/masked-stats`, bridge 2026-11-05-v5) or later; the runs of the paper without masks used `66975a4` and `20329e1`, whose full-sky statistics are identical.
+
 The build needs a stable Rust toolchain (`rustup`; the paper used 1.99.1). It needs neither MPI nor libclang. Then point Python to the library and to its wrapper:
 
 ```bash

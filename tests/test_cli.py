@@ -33,3 +33,9 @@ def test_train_denoise_spectrum_and_conditioning_options():
     a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--loss", "data=1,cl=1", "--cond", "log857",
                                            "--bias", "frozen"])
     assert a.cond == "log857" and a.bias == "frozen"
+
+
+def test_train_denoise_stat_masks_option():
+    assert train_denoise.parser().parse_args(["--data", "D", "--out", "O"]).stat_masks is None
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--stat-masks", "0,20,30,45"])
+    assert a.stat_masks == "0,20,30,45"

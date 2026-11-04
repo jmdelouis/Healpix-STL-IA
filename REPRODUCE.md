@@ -52,6 +52,7 @@ mkdir -p $R/runs
 git clone https://github.com/jmdelouis/Healpix-STL-IA $R/src
 git clone https://github.com/jmdelouis/STL-Dev-MPI $R/stl/src
 git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
+# masked statistics (runs *_mk): a second checkout at 9038114 in $R/stl_mk/src, built with STL=stl_mk
 ```
 
 `scripts/env.sh` sets the environment from a few variables:
@@ -146,7 +147,7 @@ tail -3 $R/runs/smoke/log
 bash scripts/reproduce.sh runs
 ```
 
-This submits the 14 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
+This submits the 16 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
 
 - `log`;
 - `train.json`, which holds the arguments, the loss history and the evaluations;
@@ -165,6 +166,8 @@ This submits the 14 runs listed in the script, which are independent of one anot
 | `r256_fz` | network, frozen noise biases | GPU | not yet measured |
 | `r256_fz_cl857` | network, frozen biases, spectrum loss `cl` and 857 GHz conditioning | GPU | not yet measured |
 | `l256_fz_cl` | L-BFGS reference, frozen biases and spectrum loss | GPU | not yet measured |
+| `r256_fz_cl857_mk` | as `r256_fz_cl857`, with the scattering statistics also under the masks 0, 20, 30, 45° (`--stat-masks`, STL-Dev-MPI 9038114 built in `$R/stl_mk`) | GPU | not yet measured |
+| `l256_fz_mk` | L-BFGS reference, frozen biases, masked statistics | GPU | not yet measured |
 
 `p256_l123` can instead use the GPU disc engine, with the same options:
 

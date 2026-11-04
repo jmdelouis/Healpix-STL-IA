@@ -32,3 +32,16 @@ def test_loss_is_a_reduced_chi2():
     rep = loss.report(s[0], target, var)
     assert set(rep) == {"mean", "var", "S1", "S2", "S3"}
     np.testing.assert_allclose(list(rep.values()), 1.0)
+
+
+def test_loss_with_masks():
+    """K masks: coefficients flattened mask-major, one ergodic weight each."""
+    p = plan()
+    npix = np.array([[768.0] * len(p), [300.0] * len(p)])
+    loss = DenoiseLoss(p, 8, masks=2, npix=npix)
+    assert loss.n == 2 * len(p) and loss.npix.shape == (2 * len(p),)
+    target = torch.zeros(2 * len(p), 2, dtype=torch.float64)
+    var = torch.ones(2 * len(p), dtype=torch.float64)
+    s = torch.zeros(1, 2 * len(p), 2, dtype=torch.float64)
+    s[..., 0] = torch.sqrt(var / loss.npix)
+    torch.testing.assert_close(loss(s, target, var), torch.tensor(1.0, dtype=torch.float64))

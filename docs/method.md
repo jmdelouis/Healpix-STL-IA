@@ -63,6 +63,14 @@ is estimated with $M$ = `--bias-realizations` draws (40 by default). The model i
 
 The loss needs no noise draw between two estimates, and each step is cheaper. The scheme needs fixed observations: `--real`, or `--optimizer lbfgs`.
 
+## Masked statistics
+
+With `--stat-masks 0,20,30,45`, every scattering coefficient of every term (`data`, `l1`, `l2`, `l3`) enters once per galactic mask $|b| > b_0$ ($b_0 = 0$: the full sky). Each entry has its own ergodic weight, computed from the variance and the number of pixels averaged under that mask (Delouis et al. 2022 used five masks).
+
+- **What changes.** The wavelet fields are those of the full sky; only the averages that define the coefficients are restricted to the mask. At each coarser level, the mask contains the parents of the pixels of the finer one.
+- **Why.** The full-sky averages are dominated by the Galactic plane; the masked ones constrain the faint high-latitude sky.
+- **Engine.** The masked averages are computed by the STL-Dev-MPI engine (`NativeEngine(..., masks=...)`, from commit 9038114), with their gradient. They cost 16% (auto) to 27% (cross) more than the full-sky statistics for five masks.
+
 ## Spectrum loss
 
 The term `cl` asks $u$ to have the power spectrum of the sky ({mod}`stlia.spectra`). Its noise-free target is the half-mission cross spectrum:
