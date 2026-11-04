@@ -1,0 +1,193 @@
+# Reproducing the runs of the paper
+
+This recipe rebuilds every run, figure and table of `text/main.tex` from
+public data on any Linux machine with an NVIDIA GPU. It does not depend on
+the cluster or on the person (or agent) running it. Each step lists:
+
+- its command;
+- its cost;
+- a check, so that a failure is caught at the step that causes it.
+
+Shell commands are bash. Do not run them from csh: on a csh login, pipe
+the scripts to `bash -s` or start `bash` first. Files must keep Unix line
+endings (LF).
+
+## 0. What you need
+
+| | used for the paper | minimum |
+|---|---|---|
+| GPU | NVIDIA A100 80 GB (Datarmor, Ifremer); T4 16 GB for tests | 40 GB for nside 256 full-sky runs, 16 GB for nside 64 |
+| CPU node | 32 cores, 128 GB (CPU disc engine, `p256_l123`) | same; or use the GPU disc engine |
+| disk | 80 GB (60 GB downloads, 15 GB maps, 5 GB runs) | |
+| Rust | 1.99.1 (rustup, stable) | stable toolchain, edition 2021 |
+| CUDA | driver 13.0 + NVRTC 13.0 (A100); driver 11.4 + NVRTC 11.8 wheel (T4) | driver >= 11.4, a matching `libnvrtc` on `LD_LIBRARY_PATH` |
+| Python | 3.11.18, torch 2.11.0+cu128, numpy 2.4.6, scipy 1.17.1, healpy 1.20.1, matplotlib 3.11.2 | 3.10+, torch with CUDA |
+| Slurm | optional: without it every job runs with `bash` | |
+
+Code:
+
+- **This repository**, `jmdelouis/Healpix-STL-IA`. It is private at the time of writing: ask the authors for access, or use the archived copy cited in the paper.
+- **[STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI)** (public), at commit `20329e1d2aeb6b822e194f671367e9eed8eb8193`.
+  - It provides the scattering statistics: the Rust engine `stl-bridge` and its Python wrapper `stl_port.native`.
+  - The full-sky runs of Sect. 4 used its parent commit `66975a4dead97b8828721b6fbb67b2147a3fed48`. The full-sky statistics are identical in both commits.
+  - `20329e1` adds the GPU disc engine and stops reading disc interpolation cells of weight <= 1e-9, a change at the rounding level.
+  - The nside 64 runs of Sect. 3 used an earlier build of the same full-sky statistics (branch `claude/amortized-synthesis`).
+
+## 1. Work directory and environment
+
+Everything lives under one work directory `$R`:
+
+```
+$R/src            this repository
+$R/stl/src        STL-Dev-MPI checkout     ($R/$STL/src; STL defaults to "stl")
+$R/stl/target     its build
+$R/data/planck    PLA downloads
+$R/data/maps      degraded maps (.npy)
+$R/runs           one directory per run, figures in runs/figs*
+```
+
+```bash
+export R=/path/to/workdir
+mkdir -p $R/runs
+git clone git@github.com:jmdelouis/Healpix-STL-IA.git $R/src
+git clone https://github.com/jmdelouis/STL-Dev-MPI $R/stl/src
+git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
+```
+
+`scripts/env.sh` sets the environment from a few variables:
+
+| variable | meaning |
+|---|---|
+| `R` | the work directory (required) |
+| `SITE_ENV` | a file sourced first: modules, rustup, the CUDA runtime |
+| `PY` | the Python interpreter (default `python3`) |
+| `CUDARC_CUDA_VERSION` | driver CUDA version, e.g. `13000`, `12080`, `11040`; read it from `nvidia-smi` |
+| `GPU_OPTS`, `CPU_OPTS` | `sbatch` options of a 1-GPU job and of a 32-core job; leave empty to run with `bash` |
+
+Write these lines once for your machine. `scripts/hpc_env.sh` and
+`scripts/site/datarmor.sh` are the settings of the paper, given as an example:
+
+```bash
+export R=... SITE_ENV=... PY=... CUDARC_CUDA_VERSION=...
+export GPU_OPTS="-p <gpu partition> --gres=gpu:1 -c 6 --mem=48G -t 12:00:00"
+export CPU_OPTS="-p <cpu partition> -c 32 --mem=128G -t 24:00:00"
+source $R/src/scripts/env.sh
+```
+
+**Check:**
+
+```bash
+$PY -c "import torch, healpy, stl_port.native; print(torch.cuda.is_available())"
+```
+
+It must print `True` on a GPU node.
+
+## 2. Build the scattering engine
+
+```bash
+cd $R/src
+sbatch $CPU_OPTS -o $R/runs/slurm.%j.log scripts/build_bridge.slurm   # or: bash scripts/build_bridge.slurm
+```
+
+The build takes about 10 min. It needs no MPI and no libclang.
+
+**Check:** `$STL_NATIVE_LIBRARY` exists. On a GPU node, the following prints the number of coefficients, `2522`:
+
+```bash
+$PY -c "from stl_port.native import NativeEngine as E; print(len(E(64, 5, batch=1, backend='gpu').plan))"
+```
+
+## 3. Data
+
+### Download
+
+```bash
+bash scripts/download_planck.sh 50
+```
+
+This takes 1 to 3 h and fills 60 GB, from the Planck Legacy Archive (`http://pla.esac.esa.int/pla/aio/product-action?...`). It fetches:
+
+- `HFI_SkyMap_353-psb_2048_R3.01_{full,halfmission-1,halfmission-2}.fits`;
+- `HFI_SkyMap_857_2048_R3.01_full.fits`;
+- the FFP10 noise simulations `ffp10_noise_353_psb_{full,hm1,hm2}_map_mc_000NN.fits`, NN = 00 to 49.
+
+**Check:** `$R/data/planck` holds 4 maps, `noise/` holds 50 files and `noise_hm/` holds 100.
+
+### Preparation
+
+```bash
+sbatch $CPU_OPTS -o $R/runs/slurm.%j.log scripts/prepare_data.slurm   # or: bash scripts/prepare_data.slurm
+```
+
+This takes about 3 h on 4 cores, with 24 GB of memory. It degrades every map to nside 256, 128 and 64:
+
+- NESTED pixel order, parent means;
+- 353 GHz maps in µK_CMB, the 857 GHz map in MJy/sr.
+
+**Check:**
+- `$R/data/maps` holds about 1400 `.npy` files.
+- The first line of every nside 256 run log (step 5) reads `noise pr3sims rms Q 31.61, U 32.78 uK (train std 262.9, test std 155.7)`.
+
+## 4. Smoke test (5 min on one GPU)
+
+```bash
+bash scripts/train_gpu.slurm smoke --nside 64 --noise uniform --loss data=1 --steps 50 --eval-every 50 --log-every 10
+tail -3 $R/runs/smoke/log
+```
+
+**Check:**
+- The loss decreases.
+- A step takes 0.2 s or less on an A100 or a T4.
+- `eval 50` lines are printed for Q and U.
+
+## 5. The runs
+
+```bash
+bash scripts/reproduce.sh runs
+```
+
+This submits the 10 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
+
+- `log`;
+- `train.json`, which holds the arguments, the loss history and the evaluations;
+- `model.pt`;
+- `eval_{Q,U}.npz`, which holds the maps.
+
+| run | paper | job | time (A100) |
+|---|---|---|---|
+| `sph_base`, `sph_cosmo`, `sph_pr3`, `sph_pr3x4`, `n64_base` | Sect. 3, Table 1, Figs. 1-6 | GPU | 10 min each |
+| `n256_data` | Sect. 4, Table 2 | GPU | 50 min |
+| `n256_delouis` | Sect. 4, Table 2 | GPU | 2 h 20 |
+| `p256_l123` | Sect. 4, Table 2 | 32 CPU cores | 2 h 50 |
+| `r256_dl123` | the PR3 maps denoised | GPU | 2 h 50 |
+
+`p256_l123` can instead use the GPU disc engine, with the same options:
+
+```bash
+sbatch $GPU_OPTS -o $R/runs/slurm.%j.log scripts/train_patches_gpu.slurm p256_gpu [options of p256_l123]
+```
+
+Set `CACHE_BYTES=3e9` on a 16 GB GPU. The test on a T4 ran at 2 s per step; its final full-sky evaluation does not fit in 16 GB.
+
+**Check (final `eval` line of each log, or `train.json`):** the runs are not bit-reproducible on GPUs (atomic sums), so compare with tolerances:
+- about 0.02 on the pixel error over the noise;
+- about 20 % on each family of statistics.
+
+The reference values are those of Tables 1 and 2 of the paper. For `n256_data`, for example:
+
+- field Q: pixel error 1.09, S1 0.94 (d: 25);
+- field U: pixel error 0.93, S1 2.0 (d: 27).
+
+## 6. Figures and tables
+
+```bash
+bash scripts/reproduce.sh figures
+```
+
+This writes `$R/runs/figs64` (Figs. 1-6 and `results_table.tex`), `$R/runs/figs256` (Figs. 7-8 and `results256_table.tex`) and `$R/runs/figs_real`. Copy them to `text/figures/` and compile `text/main.tex` with `latexmk -pdf`.
+
+## Pitfalls met while making the paper
+
+- **Line endings.** A script edited on Windows and copied with CRLF line endings breaks bash (`$'\r': command not found`). Fix it with `sed -i 's/\r$//' scripts/*.sh scripts/*.slurm`.
+- **GPU memory.** The GPU disc engine reserves half of the free GPU memory for its geometry cache when it starts. On a GPU shared with the network, give `--cache-bytes` explicitly.
+- **Mock sky.** In Sects. 3-4 the "clean sky" `s` of the evaluation is the PR3 map itself, which contains the Planck noise. Pixel errors and maps there compare losses, not the quality of a denoised dust map. The PR3 maps denoised (`--real`) are the actual test.

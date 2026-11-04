@@ -217,4 +217,24 @@ The scattering statistics are computed with STL-Dev-MPI \citep{stldev}; maps are
 \bibliographystyle{aa}
 \bibliography{refs}
 
+\begin{appendix}
+\section{Reproducing the runs}\label{app:repro}
+
+Every run, figure and table of this paper can be rebuilt from public data on any Linux machine with an NVIDIA GPU; the step-by-step recipe, with a check after every step and the pitfalls we met, is \texttt{REPRODUCE.md} in the repository of this paper (\texttt{jmdelouis/Healpix-STL-IA}). It is written so that it can be followed without knowledge of our cluster, by a person or by an automated agent. We summarise it here.
+
+\paragraph{Code.} This repository (network, training, figures) and STL-Dev-MPI \citep{stldev}, public, at commit \texttt{20329e1d2aeb} (the full-sky runs used its parent \texttt{66975a4dead9}, with identical full-sky statistics). The scattering engine is the Rust library \texttt{stl-bridge}, built with \texttt{cargo build --release -p stl-bridge --features gpu} (Rust stable, 1.99.1 here; no MPI needed), called from Python through \texttt{stl\_port.native}.
+
+\paragraph{Environment.} Python 3.11 with PyTorch 2.11 (CUDA 12.8 build), NumPy 2.4, SciPy 1.17, healpy 1.20 and Matplotlib 3.11; at run time the GPU engine compiles its kernels with NVRTC, which must match the driver (\texttt{CUDARC\_CUDA\_VERSION} at build time, e.g.\ 13000 for CUDA 13.0). One work directory \texttt{\$R} holds the repository, the STL-Dev-MPI checkout and its build, the data and the runs. The machine is described by a handful of variables (\texttt{R}, the Python interpreter, a site file for modules, and the Slurm options of a one-GPU job and of a 32-core job, empty to run without Slurm) read by \texttt{scripts/env.sh}; those of our runs (Datarmor, Ifremer: A100 80\,GB GPUs; tests on a T4 16\,GB) are \texttt{scripts/hpc\_env.sh}.
+
+\paragraph{Pipeline.} From \texttt{\$R/src}, after \texttt{source scripts/env.sh}:
+\begin{enumerate}
+  \item \texttt{scripts/build\_bridge.slurm}: build of the engine (10\,min);
+  \item \texttt{scripts/download\_planck.sh 50}: the PR3 353\,GHz PSB full- and half-mission maps, the 857\,GHz map, and 50 FFP10 noise simulations of each of the three 353\,GHz maps from the Planck Legacy Archive (60\,GB);
+  \item \texttt{scripts/prepare\_data.slurm}: NESTED parent means at $\nside=256$, 128 and 64, in $\mu{\rm K}_{\rm CMB}$ (3\,h on 4 cores);
+  \item \texttt{scripts/reproduce.sh runs}: the runs of Sects.~3 and \ref{sec:n256} and the denoising of the PR3 maps, each with its exact options (seed 0, 3000 steps; 10\,min per $\nside=64$ run and 0.8 to 2.8\,h per $\nside=256$ run on one A100, 2.8\,h on 32 cores for the CPU patch run);
+  \item \texttt{scripts/reproduce.sh figures}: all figures and tables.
+\end{enumerate}
+Each run writes its arguments, loss history and evaluations to \texttt{train.json}. The GPU runs are not bit-reproducible (atomic sums); a rerun agrees with Tables~\ref{tab:results} and \ref{tab:n256} to about 0.02 in pixel error and 20\% on the families of statistics. A five-minute smoke test (Sect.~4 of the recipe) checks the installation before the long runs; the environment, the engine and the smoke test of the recipe were replayed in a fresh directory on the T4 test machine.
+\end{appendix}
+
 \end{document}

@@ -10,6 +10,7 @@ but replacing the per-map L-BFGS optimisation by a trained network.
 
 - `text/` : A&A paper (synchronised with Overleaf via `git subtree`)
 - data and heavy computations live on the HPC (`$SCRATCH`), not in this repository
+- **`REPRODUCE.md`**: step-by-step recipe to rebuild every run, figure and table on any GPU machine
 
 ## Prototype (`train_denoise.py`)
 
