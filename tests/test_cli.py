@@ -25,3 +25,11 @@ def test_train_denoise_lbfgs_options():
     assert (a.optimizer, a.lbfgs_rounds, a.lbfgs_iter, a.lbfgs_history) == ("adam", 10, 50, 10)
     a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--optimizer", "lbfgs", "--lbfgs-rounds", "3"])
     assert a.optimizer == "lbfgs" and a.lbfgs_rounds == 3
+
+
+def test_train_denoise_spectrum_and_conditioning_options():
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O"])
+    assert (a.bias, a.cond, a.cl_masks, a.cl_width) == ("live", "none", "0,30,45", 30)
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--loss", "data=1,cl=1", "--cond", "log857",
+                                           "--bias", "frozen"])
+    assert a.cond == "log857" and a.bias == "frozen"

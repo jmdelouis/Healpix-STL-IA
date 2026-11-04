@@ -70,11 +70,12 @@ import time
 import numpy as np
 import torch
 
+from stlia.spectra import BinnedSpectra, SpectrumLoss
 from stlia.stl_torch import DenoiseLoss, Stats, as_real
 from stlia.unet import UNet
 
 
-TERMS = ("data", "res", "cross", "l1", "l2", "l3")
+TERMS = ("data", "res", "cross", "l1", "l2", "l3", "cl")
 DELOUIS = ("l1", "l2", "l3")
 
 
@@ -173,9 +174,19 @@ def parser():
     p.add_argument("--real", action="store_true",
                    help="denoise the PR3 maps themselves: d and (d1, d2) are the data, both fields are trained")
     p.add_argument("--loss", default="data=1,res=1,cross=1",
-                   help="weights of the terms data, res, cross and of the Delouis et al. (2022) terms l1, l2, l3")
+                   help="weights of the terms data, res, cross, of the Delouis et al. (2022) terms l1, l2, l3, "
+                        "and of the binned half-mission cross spectrum cl")
+    p.add_argument("--cl-masks", default="0,30,45",
+                   help="cl: galactic latitude cuts b0 in degrees, comma-separated: the masks keep abs(b) > b0 (0: full sky)")
+    p.add_argument("--cl-lmin", type=int, default=10, help="cl: first multipole")
+    p.add_argument("--cl-lmax", type=int, default=None, help="cl: last multipole (default 2 nside - 1)")
+    p.add_argument("--cl-width", type=int, default=30, help="cl: width of the multipole bins")
+    p.add_argument("--cl-apod", type=float, default=5.0, help="cl: FWHM of the mask apodisation (degrees)")
     p.add_argument("--levels", type=int, default=None, help="levels of the U-Net (default: down to nside 8)")
     p.add_argument("--channels", default=None, help="channels per level, comma-separated (default: 32,64,96,128,...)")
+    p.add_argument("--cond", default="none", choices=["none", "log857"],
+                   help="conditioning map of the U-Net: log of the 857 GHz intensity, standardised, given at the "
+                        "input and to every decoder level (the decoding then depends on the local dust intensity)")
     p.add_argument("--conv", default="sphere", choices=["sphere", "faces"],
                    help="STL stencil on the sphere, or planar convolutions on the base faces (comparison only)")
     p.add_argument("--gauge", default="phi", choices=["phi", "cosmo"], help="orientation of the kernels")
@@ -193,6 +204,13 @@ def parser():
                    help="lbfgs: rounds; the noise realisations are redrawn between rounds and fixed within one")
     p.add_argument("--lbfgs-iter", type=int, default=50, help="lbfgs: L-BFGS iterations per round")
     p.add_argument("--lbfgs-history", type=int, default=10, help="lbfgs: L-BFGS history size")
+    p.add_argument("--bias", default="live", choices=["live", "frozen"],
+                   help="live: <Phi(u + n_i)> over --realizations draws at every step, gradient through it; "
+                        "frozen: Phi(u) + B, the noise bias B estimated at a fixed u and kept constant "
+                        "(Delouis et al. 2022); needs fixed observations (--real or --optimizer lbfgs)")
+    p.add_argument("--bias-realizations", type=int, default=40, help="frozen: noise draws of a bias estimate")
+    p.add_argument("--bias-every", type=int, default=50,
+                   help="frozen, network: steps between two bias estimates (L-BFGS: one per round)")
     return p
 
 
@@ -218,7 +236,20 @@ def main(argv=None):
         return torch.as_tensor(np.load(os.path.join(a.data, f"planck353_{name}_n{a.nside}{tag}.npy")), device=dev)
 
     train_sky, test_sky = load(a.train_field), load(a.test_field)
-    a.halfmission = any(weights[t] for t in DELOUIS)
+    a.halfmission = any(weights[t] for t in DELOUIS + ("cl",))
+    if weights["cl"]:
+        spectra = BinnedSpectra(a.nside, masks=[float(b) for b in a.cl_masks.split(",")], lmin=a.cl_lmin,
+                                lmax=a.cl_lmax, width=a.cl_width, apod=a.cl_apod, device=f"cuda:{a.device}")
+        cl_cache = {}
+
+        def cl_loss(field, d1, d2):
+            """Spectrum loss of the half-mission pair (d1, d2) (cached for fixed observations)."""
+            key = (field, d1.data_ptr(), d2.data_ptr())
+            if key not in cl_cache:
+                if len(cl_cache) > 8:
+                    cl_cache.clear()
+                cl_cache[key] = SpectrumLoss(spectra, d1, d2)
+            return cl_cache[key]
     if a.halfmission:
         T = torch.as_tensor(np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy")), device=dev)
     a.noise_rel_std = a.noise_rel * float(train_sky.std())
@@ -265,12 +296,14 @@ def main(argv=None):
     def losses(u, d, field, s_stats=None, generator=None, test=False, hm=None):
         """Terms of the loss for `u` `[npix]` (with gradient) and `d`; `hm`:
         the half-mission observations (d1, d2) for the Delouis terms."""
-        if hm is not None:
-            out = delouis(u, d, hm[0], hm[1], field, generator=generator, test=test)
-            if weights["data"] == weights["res"] == weights["cross"] == 0:
-                return out
-        else:
-            out = {}
+        out = {}
+        if hm is not None and any(weights[t] for t in DELOUIS):
+            out.update(delouis(u, d, hm[0], hm[1], field, generator=generator, test=test))
+        if hm is not None and weights["cl"]:
+            _, n1, n2 = noise[field].draw(B, test=test, generator=generator, hm=True)
+            out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u + n1, u + n2))
+        if weights["data"] == weights["res"] == weights["cross"] == 0:
+            return out
         target, tvar = forward1(d)
         n = noise[field].draw(B, test=test, generator=generator)
         parts = [u + n]
@@ -287,8 +320,86 @@ def main(argv=None):
             out["res"] = loss_fn(st[k + B:k + B + 1], st[k:k + B].mean(0).detach(), noise_var[field])
         return out
 
+    # -- Frozen noise biases (--bias frozen), as in Delouis et al. (2022): the model of a term
+    # is the statistic of u alone plus a bias B = <Phi(u0 + n_i)> - Phi(u0) estimated at a fixed
+    # u0 with many realisations and kept constant (no gradient) until the next estimate.
+    def padded(x, batch):
+        """`x` `[k, npix]` -> `[batch, npix]`, completed with copies of x[0] (their
+        cotangents are zero, so they add nothing to the gradient)."""
+        return torch.cat([x, x[:1].expand(batch - len(x), -1)]) if len(x) < batch else x
+
+    def auto_stats(x):
+        """Statistics with gradient of `x` `[k <= nb, npix]` -> `[k, ncoeff, 2]`."""
+        return stats(padded(x, nb))[:len(x)]
+
+    def cross_stats(a_, b_):
+        """Cross statistics with gradient of the pairs `[k <= 3 + 3B, npix]`."""
+        n = len(a_)
+        st = CrossStats.apply(padded(a_, 3 + 3 * B), padded(b_, 3 + 3 * B), xrun)
+        return st[:n], xrun["var"][:n]
+
+    def estimate_bias(u, field, generator=None):
+        """Noise biases of the terms of `--loss` at the fixed map `u` (no gradient),
+        averaged over `--bias-realizations` training draws."""
+        M = a.bias_realizations
+        bias = {}
+        with torch.no_grad():
+            if weights["data"]:
+                acc = 0
+                for k0 in range(0, M, nb):
+                    k = min(nb, M - k0)
+                    n = noise[field].draw(k, generator=generator)
+                    acc = acc + auto_stats(u + n).sum(0)
+                bias["data"] = acc / M - auto_stats(u[None])[0]
+            if weights["cl"]:
+                _, n1, n2 = noise[field].draw(M, generator=generator, hm=True)
+                acc = 0
+                for k0 in range(0, M, B):
+                    acc = acc + spectra(u + n1[k0:k0 + B], u + n2[k0:k0 + B]).sum(0)
+                bias["cl"] = acc / M - spectra(u, u)
+            if any(weights[t] for t in DELOUIS):
+                st0, _ = cross_stats(torch.stack([u, T]), torch.stack([u, u]))
+                uu, tu = st0[0], st0[1]  # Phi(u, u), Phi(T, u)
+                acc = {t: 0 for t in DELOUIS}
+                per = (3 + 3 * B) // 3
+                for k0 in range(0, M, per):
+                    k = min(per, M - k0)
+                    n, n1, n2 = noise[field].draw(k, generator=generator, hm=True)
+                    st, _ = cross_stats(torch.cat([u + n1, u + n, T.expand(k, -1)]),
+                                        torch.cat([u + n2, u.expand(k, -1), u + n]))
+                    for t, name in enumerate(DELOUIS):
+                        acc[name] = acc[name] + st[t * k:(t + 1) * k].sum(0)
+                bias["l1"] = acc["l1"] / M - uu
+                bias["l2"] = acc["l2"] / M - uu
+                bias["l3"] = acc["l3"] / M - tu
+        return bias
+
+    def frozen_losses(u, d, field, bias, hm=None):
+        """Terms of `--loss` with frozen biases: Phi(u) + B against the targets of
+        `losses` (same weights), without noise draws."""
+        out = {}
+        if weights["data"]:
+            target, tvar = forward1(d)
+            out["data"] = loss_fn((auto_stats(u[None])[0] + bias["data"])[None], target, tvar)
+        if weights["cl"]:
+            out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u, u) + bias["cl"])
+        if any(weights[t] for t in DELOUIS):
+            d1, d2 = hm
+            st, var = cross_stats(torch.stack([d1, d, T, u, T]), torch.stack([d2, u, d, u, u]))
+            model = {"l1": st[3], "l2": st[3], "l3": st[4]}
+            for t, name in enumerate(DELOUIS):
+                target = st[t] if name == "l2" else st[t].detach()
+                out[name] = xloss((model[name] + bias[name])[None], target, var[t])
+        return out
+
     channels = [int(c) for c in a.channels.split(",")] if a.channels else None
-    net = UNet(a.nside, levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz).to(dev)
+    cond = None
+    if a.cond == "log857":
+        i857 = np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy"))
+        c = np.log(np.clip(i857, np.percentile(i857[i857 > 0], 0.1), None))
+        cond = torch.as_tensor((c - c.mean()) / c.std(), device=dev, dtype=torch.float32)[None, None]
+    net = UNet(a.nside, levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz,
+               cond=0 if cond is None else 1).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
     nparams = sum(q.numel() for q in net.parameters())
@@ -324,7 +435,7 @@ def main(argv=None):
         out = {}
         with torch.no_grad():
             for f, (s, d, hm) in fixed.items():
-                u = net(d[None], d.std())[0] if outputs is None else outputs[f]
+                u = net(d[None], d.std(), cond=cond)[0] if outputs is None else outputs[f]
                 ts, tv = forward1(s)
                 us, _ = forward1(u)
                 ds, _ = forward1(d)
@@ -351,9 +462,15 @@ def main(argv=None):
             print(f"eval {step} {f}: pixel err/noise {e['pixel_rms_error_over_noise']:.3f} {terms} "
                   f"| u/d vs sky [sigma]: {fam}", flush=True)
 
+    frozen = None
+    if a.bias == "frozen":
+        assert a.real or a.optimizer == "lbfgs", "--bias frozen needs fixed observations (--real or --optimizer lbfgs)"
+        frozen = (estimate_bias, frozen_losses)
     if a.optimizer == "lbfgs":
         return run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev,
-                         {"j": j, "coefficients": len(one.plan), "noise_rms": rms})
+                         {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, frozen)
+    bias = {}
+    bias_gen = torch.Generator(device=dev).manual_seed(a.seed + 777)
 
     hist = {"step": [], "loss": [], **{t: [] for t in TERMS}}
     evals = {0: evaluate()}
@@ -366,8 +483,13 @@ def main(argv=None):
         else:
             f = a.train_field
             d, hm = observe(f, train_sky)
-        u = net(d[None], d.std())[0]
-        terms = losses(u, d, f, hm=hm)
+        u = net(d[None], d.std(), cond=cond)[0]
+        if frozen:
+            if f not in bias or (step - 1) % a.bias_every < len(fields):
+                bias[f] = estimate_bias(u.detach(), f, generator=bias_gen)  # at the current network output
+            terms = frozen_losses(u, d, f, bias[f], hm=hm)
+        else:
+            terms = losses(u, d, f, hm=hm)
         loss = sum(weights[k] * v for k, v in terms.items())
         opt.zero_grad(set_to_none=True)
         loss.backward()
@@ -391,7 +513,7 @@ def main(argv=None):
                    "evals": evals}, f, indent=1)
 
 
-def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta):
+def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta, frozen=None):
     """The reference without a network: minimise the training losses over the
     pixels of u, one map per field, with the native L-BFGS of STL-Dev-MPI
     (strong-Wolfe line search), starting from u = d.
@@ -403,7 +525,12 @@ def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta):
     changed between rounds.  No noise bias is frozen (unlike Delouis et al.
     2022): Phi(u + n_i) is recomputed at the current u at every evaluation,
     with the gradient through it.  Every round ends with an
-    evaluation; the last one writes eval_{field}.npz."""
+    evaluation; the last one writes eval_{field}.npz.
+
+    With `frozen` (``--bias frozen``: the functions `estimate_bias` and
+    `frozen_losses` of :func:`main`), the noise biases are estimated at the
+    current u at the start of every round and kept constant during it, and
+    the objective is Phi(u) + B: the scheme of Delouis et al. (2022)."""
     from stl_port.native import native_lbfgs
 
     # The optimiser works on u / std(d), of order one like the input of the network: in uK the
@@ -418,14 +545,21 @@ def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta):
     for rnd in range(1, a.lbfgs_rounds + 1):
         seed = 1000003 * (a.seed + 1) + rnd
         last = {}
+        if frozen:
+            g = torch.Generator(device=dev).manual_seed(seed)
+            bias = {f: frozen[0](torch.as_tensor(x[i] * scale[i], device=dev), f, generator=g)
+                    for i, f in enumerate(fields)}
 
         def objective(trial):
             u = torch.tensor(np.array(trial) * scale, device=dev, requires_grad=True)
             total, parts = 0.0, {}
             for i, f in enumerate(fields):
                 _, d, hm = fixed[f]
-                g = torch.Generator(device=dev).manual_seed(seed + i)  # the same draws at every evaluation of the round
-                terms = losses(u[i], d, f, generator=g, hm=hm)
+                if frozen:
+                    terms = frozen[1](u[i], d, f, bias[f], hm=hm)
+                else:
+                    g = torch.Generator(device=dev).manual_seed(seed + i)  # the same draws at every evaluation of the round
+                    terms = losses(u[i], d, f, generator=g, hm=hm)
                 loss_f = sum(weights[k] * v for k, v in terms.items())
                 loss_f.backward()  # per field: the engine keeps one forward state at a time
                 total += loss_f.item()

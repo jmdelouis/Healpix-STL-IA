@@ -186,6 +186,12 @@ class UNet(nn.Module):
         Normalisation; "pixel" is required to train on patches.
     scale : float, optional
         Fixed input scale; None uses the std of every map.
+    cond : int
+        Number of conditioning maps (e.g. log I_857, a tracer of the dust
+        intensity, hence of the local signal-to-noise ratio).  They are
+        concatenated to the input and, averaged down the pyramid, to the
+        input of every decoder level, so that the decoding depends on them.
+        Sphere convolutions only.
 
     Notes
     -----
@@ -193,7 +199,7 @@ class UNet(nn.Module):
     """
 
     def __init__(self, nside, levels=4, channels=None, slope=0.2, conv="sphere", gauge="phi", ksz=3, norm="group",
-                 scale=None):
+                 scale=None, cond=0):
         """`norm`: 'group' (GroupNorm over the map) or 'pixel' (over the
         channels of every pixel: required to train on patches and apply on the
         sky).  `scale`: fixed input scale (uK); None uses the std of every map."""
@@ -202,7 +208,8 @@ class UNet(nn.Module):
         assert conv in ("sphere", "faces")
         assert conv == "sphere" or norm == "group", "face images: GroupNorm only"
         self.nside, self.levels, self.conv, self.gauge, self.ksz = nside, levels, conv, gauge, ksz
-        self.norm, self.scale = norm, scale
+        self.norm, self.scale, self.cond = norm, scale, int(cond)
+        assert self.cond == 0 or conv == "sphere", "conditioning maps: sphere convolutions only"
         ch = list(channels or default_channels(levels))
         assert len(ch) == levels, "one channel count per level"
         self.channels = ch
@@ -210,9 +217,9 @@ class UNet(nn.Module):
         self.dec = nn.ModuleList()
         if conv == "sphere":
             for k, c in enumerate(ch):
-                self.enc.append(SphereBlock(1 if k == 0 else ch[k - 1], c, ksz, slope, norm))
+                self.enc.append(SphereBlock(1 + self.cond if k == 0 else ch[k - 1], c, ksz, slope, norm))
             for k in range(levels - 2, -1, -1):
-                self.dec.append(SphereBlock(ch[k + 1] + ch[k], ch[k], ksz, slope, norm))
+                self.dec.append(SphereBlock(ch[k + 1] + ch[k] + self.cond, ch[k], ksz, slope, norm))
             self.head = nn.Conv1d(ch[0], 1, 1)
             self.geometry = None
         else:
@@ -231,18 +238,23 @@ class UNet(nn.Module):
     def config(self):
         """Constructor arguments, saved with the weights in ``model.pt``."""
         return {"nside": self.nside, "levels": self.levels, "channels": self.channels, "conv": self.conv,
-                "gauge": self.gauge, "ksz": self.ksz, "norm": self.norm, "scale": self.scale}
+                "gauge": self.gauge, "ksz": self.ksz, "norm": self.norm, "scale": self.scale,
+                "cond": self.cond}
 
     def input_scale(self, d):
         """Scale of the input: the fixed `scale`, or the std of `d`."""
         return d.std() if self.scale is None else torch.as_tensor(self.scale, dtype=d.dtype, device=d.device)
 
-    def forward_patches(self, d, patches):
+    def forward_patches(self, d, patches, cond=None):
         """`d`: `[B, n]` values on the flat pixels of `patches`
-        (`stlia.regions.Patches`, levels as the network); returns `u`."""
+        (`stlia.regions.Patches`, levels as the network), `cond` `[B, cond, n]`
+        the conditioning maps on the same pixels; returns `u`."""
         assert self.conv == "sphere" and self.norm == "pixel", "patches need sphere convolutions and pixel norm"
         scale = self.input_scale(d)
         x = (d / scale).float()[:, None]
+        conds = self._cond_levels(cond, lambda c, k: patches.pool(c, k))
+        if conds:
+            x = torch.cat([x, conds[0]], 1)
         skips = []
         for k, enc in enumerate(self.enc):
             if k:
@@ -251,7 +263,8 @@ class UNet(nn.Module):
             skips.append(x)
         for i, dec in enumerate(self.dec):
             k = self.levels - 2 - i
-            x = dec(torch.cat([patches.up(x, k), skips[k]], 1), patches.levels[k])
+            parts = [patches.up(x, k), skips[k]] + ([conds[k]] if conds else [])
+            x = dec(torch.cat(parts, 1), patches.levels[k])
         return d - scale * self.head(x)[:, 0].to(d.dtype)
 
     def stencils(self, device):
@@ -260,15 +273,29 @@ class UNet(nn.Module):
             self.geometry = [SphereLevel(self.nside >> k, self.ksz, self.gauge, device) for k in range(self.levels)]
         return self.geometry
 
-    def forward(self, d, scale=None):
+    def _cond_levels(self, cond, pool):
+        """The conditioning maps `[B, cond, n]` at every level (float32), or []."""
+        if self.cond == 0:
+            return []
+        assert cond is not None and cond.shape[1] == self.cond, f"the network needs {self.cond} conditioning maps"
+        out = [cond.float()]
+        for k in range(self.levels - 1):
+            out.append(pool(out[-1], k))
+        return out
+
+    def forward(self, d, scale=None, cond=None):
         """`d`: NESTED maps `[B, 12 nside^2]`; returns `u` with the dtype of `d`.
-        `scale` overrides the input scale of the network."""
+        `scale` overrides the input scale of the network; `cond`
+        `[B, cond, 12 nside^2]`: the conditioning maps (see the class)."""
         if scale is None:
             scale = self.input_scale(d)
         x = (d / scale).float()
         if self.conv == "sphere":
             geo = self.stencils(x.device)
             x = x[:, None]
+            conds = self._cond_levels(cond, lambda c, k: c.view(c.shape[0], c.shape[1], -1, 4).mean(-1))
+            if conds:
+                x = torch.cat([x, conds[0]], 1)
             skips = []
             for k, enc in enumerate(self.enc):
                 if k:
@@ -277,7 +304,8 @@ class UNet(nn.Module):
                 skips.append(x)
             for i, dec in enumerate(self.dec):
                 k = self.levels - 2 - i
-                x = dec(torch.cat([x.repeat_interleave(4, dim=-1), skips[k]], 1), geo[k])
+                parts = [x.repeat_interleave(4, dim=-1), skips[k]] + ([conds[k]] if conds else [])
+                x = dec(torch.cat(parts, 1), geo[k])
             r = self.head(x)[:, 0]
         else:
             n = self.nside
@@ -306,6 +334,6 @@ def load(path, device):
     ck = torch.load(path, map_location=device, weights_only=False)
     net = UNet(ck["nside"], ck["levels"], ck["channels"], conv=ck.get("conv", "faces"),
                gauge=ck.get("gauge", "phi"), ksz=ck.get("ksz", 3), norm=ck.get("norm", "group"),
-               scale=ck.get("scale")).to(device)
+               scale=ck.get("scale"), cond=ck.get("cond", 0)).to(device)
     net.load_state_dict(ck["state"])
     return net.eval(), ck

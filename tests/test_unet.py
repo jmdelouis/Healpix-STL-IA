@@ -93,3 +93,23 @@ def test_save_and_load(tmp_path):
     d = sky()
     with torch.no_grad():
         torch.testing.assert_close(net2(d), net.eval()(d))
+
+
+def test_conditioning_maps():
+    """With a conditioning map: identity at initialisation, the output depends
+    on the map once trained, and the patches still match the full sky."""
+    nside, levels = 32, 2
+    torch.manual_seed(0)
+    m = sky(nside=nside, batch=1)
+    c = torch.as_tensor(np.random.default_rng(9).normal(size=(1, 1, 12 * nside * nside)))
+    net = UNet(nside, levels, [8, 8], norm="pixel", scale=1.0, cond=1)
+    torch.testing.assert_close(net(m, cond=c), m)
+    torch.nn.init.normal_(net.head.weight, std=0.1)
+    with torch.no_grad():
+        full = net(m, cond=c)[0]
+        assert not torch.allclose(full, net(m, cond=-c)[0])
+        vecs = pixel_vectors(nside, "cpu")
+        ids = disc_ids(vecs, 1000, math.radians(30))
+        part = net.forward_patches(m[:, ids], Patches([ids], nside, levels), cond=c[:, :, ids])[0]
+    near = (vecs[ids] @ vecs[1000]) >= math.cos(math.radians(5))
+    torch.testing.assert_close(part[near], full[ids][near], atol=5e-4, rtol=1e-4)

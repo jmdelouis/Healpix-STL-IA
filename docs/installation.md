@@ -25,6 +25,8 @@ pytest
 
 The package requires Python 3.10 or later, numpy, scipy, torch, healpy and matplotlib. It provides two commands, `stlia-train-denoise` and `stlia-train-patches`. The same programs are `python train_denoise.py` and `python train_patches.py` from the repository root.
 
+The spin-2 (E/B) transforms of {class}`stlia.sht.HEALPixSHT` need the optional packages `quaternionic` and `spherical` (`pip install "healpix-stl-ia[spin]"`). The spin-0 spectra used by the losses do not.
+
 ## The STL-Dev-MPI engine
 
 The statistics, and their exact gradients, come from the `stl-bridge` library of [STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI). It is called from Python through `stl_port.native`.

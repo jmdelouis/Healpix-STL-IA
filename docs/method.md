@@ -46,6 +46,50 @@ where $\sigma_d$ is the standard deviation of $d$, or a fixed scale for patch tr
 - **Noise realisations.** They are drawn from the training simulations. Their seed is fixed within a round, so that the loss is deterministic for the line search, and changes between the `--lbfgs-rounds` rounds of `--lbfgs-iter` iterations. Unlike the original method, no noise bias is frozen: $\Phi(u+n_i)$ is recomputed at the current $u$ at every evaluation, and the gradient goes through it.
 - **Evaluation.** Every round ends with the same evaluation as a training run, so the two can be compared directly in `train.json`.
 
+## Noise biases: live or frozen
+
+The model side of every term is an average over noise realisations, such as $\langle\Phi(u+n_i)\rangle$. Two schemes are available (`--bias`):
+
+**`live`** (default). At every step, or every evaluation of the L-BFGS loss, the average uses $B$ = `--realizations` draws at the current $u$, and the gradient goes through it. The bias $\langle\Phi(u+n)\rangle-\Phi(u)$ is never formed explicitly: it follows $u$ at every step, estimated from a few draws.
+
+**`frozen`**: the scheme of Delouis et al. (2022). At a fixed map $u_0$, the bias of each term,
+
+$$B_k = \langle \Phi_k(u_0 + n_i) \rangle_{i \le M} - \Phi_k(u_0),$$
+
+is estimated with $M$ = `--bias-realizations` draws (40 by default). The model is then $\Phi_k(u) + B_k$, with the gradient through $\Phi_k(u)$ only, and $B_k$ is kept constant until the next estimate:
+
+- with L-BFGS, at the start of every round;
+- for a network, every `--bias-every` steps, from the current output.
+
+The loss needs no noise draw between two estimates, and each step is cheaper. The scheme needs fixed observations: `--real`, or `--optimizer lbfgs`.
+
+## Spectrum loss
+
+The term `cl` asks $u$ to have the power spectrum of the sky ({mod}`stlia.spectra`). Its noise-free target is the half-mission cross spectrum:
+
+$$
+C_b(m\,d_1, m\,d_2) \quad\text{vs}\quad \langle C_b(m(u+\tilde n_1), m(u+\tilde n_2))\rangle,
+$$
+
+for each galactic mask $m$ (`--cl-masks`, $|b|$ above each cut, apodised by `--cl-apod`). Here $C_b$ is the pseudo-spectrum of the masked maps, divided by the mean of the squared mask and binned in multipole (`--cl-lmin`, `--cl-lmax`, `--cl-width`).
+
+Each bin is weighted by the Gaussian variance of the target, $(C_b^{11}C_b^{22} + (C_b^{12})^2)/\nu_b$, where $\nu_b$ is the number of modes of the bin times the effective sky fraction of the mask.
+
+This term constrains the power at high Galactic latitude. The full-sky ergodic weights of the scattering statistics hardly do so, because the Galactic plane dominates their variance. With `--bias frozen`, the term is modelled as $C_b(u,u) + B_{\rm cl}$.
+
+The spectra come from a differentiable ring-FFT spherical harmonic transform ({class}`stlia.sht.HEALPixSHT`). It is adapted from [healpix-analyse](https://github.com/GRID4EARTH/healpix-analyse) and FOSCAT, agrees with `healpy.anafast`, and propagates gradients through `torch.autograd`. They are the spectra of the scalar maps, Q and U separately, as the network treats them. E/B spectra (`spin=2`) are available in {class}`~stlia.sht.HEALPixSHT`, but a loss on them needs a joint (Q, U) network.
+
+## Conditioning on the dust intensity
+
+With `--cond log857`, the network also receives $\log I_{857}$, standardised: the 857 GHz intensity, a tracer of the dust and hence of the local signal-to-noise ratio. This map is concatenated:
+
+- to the input of the network;
+- averaged down the pyramid, to the input of every decoder level.
+
+The decoding, i.e. how much is removed, can then depend on the local dust intensity. The untrained network is still the identity.
+
+The 857 GHz map is also the template of `l3`. Check that the network does not copy its morphology into $u$: the residual $d-u$ must remain uncorrelated with it.
+
 ## The losses of Delouis et al. (2022)
 
 `stlia-train-denoise --loss` combines weighted terms. Besides `data`, it implements the three cross-statistics terms of Delouis et al. (2022). Each is a reduced $\chi^2$ of the same form, with $\Phi(a, b)$ the cross scattering covariances of the engine and $\tilde n$ fresh noise draws:

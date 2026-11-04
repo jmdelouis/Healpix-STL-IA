@@ -40,12 +40,20 @@ runs)
     # the reference: the same losses minimised over the pixels of u with the L-BFGS of STL-Dev-MPI
     gpu l256_dl123 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --realizations 4 --optimizer lbfgs \
         --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0 --log-every 50 --eval-every 500
+    # frozen noise biases (Delouis et al. 2022), then the spectrum loss and the 857 GHz conditioning
+    gpu l256_fz --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --bias-every 50         --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
+    gpu r256_fz --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --bias frozen --bias-realizations 40 --bias-every 50 $common
+    gpu r256_fz_cl857 --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --cond log857 --bias frozen --bias-realizations 40 --bias-every 50 $common
+    gpu l256_fz_cl --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --realizations 4         --optimizer lbfgs --bias frozen --bias-realizations 40 --bias-every 50 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
     $PY scripts/make_figures.py $R/runs $R/runs/figs64
     $PY scripts/make_figures256.py $R/runs $R/runs/figs256
     $PY scripts/make_figures_real.py $R/runs/r256_dl123 $R/data/maps $R/runs/figs_real
     $PY scripts/make_figures_real.py $R/runs/l256_dl123 $R/data/maps $R/runs/figs_lbfgs
+    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl; do
+        $PY scripts/make_figures_real.py $R/runs/$r $R/data/maps $R/runs/figs_$r
+    done
     ls $R/runs/figs64 $R/runs/figs256 $R/runs/figs_real
     ;;
 *)

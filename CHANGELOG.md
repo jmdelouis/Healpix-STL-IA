@@ -5,6 +5,11 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 ## Unreleased
 
 ### Added
+- **Frozen noise biases.** `--bias frozen` implements the scheme of Delouis et al. (2022): the bias of each term is estimated at a fixed `u` with `--bias-realizations` draws and kept constant (re-estimated every L-BFGS round, or every `--bias-every` network steps), and the model is `Phi(u) + B`. The default, `--bias live`, keeps the previous behaviour.
+- **Spectrum loss `cl`.** A binned half-mission cross spectrum under galactic masks (`--cl-masks`, `--cl-lmin`, `--cl-lmax`, `--cl-width`, `--cl-apod`). It comes with the modules `stlia.sht` and `stlia.spectra`: a differentiable ring-FFT spherical harmonic transform and `anafast`, adapted from healpix-analyse and FOSCAT and tested against healpy, and binned masked spectra. The optional extra `spin` covers the E/B transforms.
+- **Conditioning maps.** `UNet(cond=...)` and `stlia-train-denoise --cond log857`: the network receives log I_857 at its input and at every decoder level.
+- **Runs.** `l256_fz`, `r256_fz`, `r256_fz_cl857` and `l256_fz_cl` are added to `scripts/reproduce.sh` and `REPRODUCE.md`.
+- **Documentation.** Updated: method (noise biases, spectrum loss, conditioning), user guide, installation, API. Paper: Sect. 2.4 and the conclusion of Sect. 5.
 - **L-BFGS reference.** `stlia-train-denoise --optimizer lbfgs` uses no network: it minimises the training losses directly over the pixels of `u`, with the native L-BFGS of STL-Dev-MPI (`native_lbfgs`, strong-Wolfe line search). This is the per-map method of Delouis et al. (2022).
   - New options: `--lbfgs-rounds`, `--lbfgs-iter`, `--lbfgs-history`. The noise realisations are fixed within a round and redrawn between rounds.
   - The run `l256_dl123` is added to `scripts/reproduce.sh`.

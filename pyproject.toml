@@ -32,6 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov"]
+spin = ["quaternionic", "spherical"]
 docs = [
   "sphinx>=8",
   "pydata-sphinx-theme",

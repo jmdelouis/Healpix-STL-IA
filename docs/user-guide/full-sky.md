@@ -59,6 +59,21 @@ It writes the same files as a training run, except `model.pt`: `log`, `train.jso
 
 On a T4, at $N_{\rm side}=256$ with 2 realisations, one evaluation of the loss for both fields takes about 23 s; 8 iterations bring the loss from 13.9 to 2.6.
 
+## Frozen biases, spectrum loss and conditioning
+
+The options below combine with the real-data mode (see {doc}`../method`):
+
+```bash
+# frozen noise biases (Delouis et al. 2022), the binned half-mission cross spectrum
+# under three galactic masks, and the 857 GHz intensity as a conditioning map
+stlia-train-denoise --data maps --out runs/real256_fz --nside 256 --real     --loss data=1,l1=1,l2=1,l3=1,cl=1 --bias frozen --bias-realizations 40 --bias-every 50     --cl-masks 0,30,45 --cond log857
+
+# the L-BFGS reference with the same frozen biases and spectrum loss
+stlia-train-denoise --data maps --out runs/lbfgs256_fz --nside 256 --real     --loss data=1,l1=1,l2=1,l3=1,cl=1 --bias frozen --optimizer lbfgs
+```
+
+`--cond log857` reads `planck857_I_n<nside>.npy`, which is already needed by `l3`. The spectrum loss keeps its Legendre tables on the GPU: about 2 GB at $N_{m side}=256$, $\ell_{\max}=511$, in double precision.
+
 ## Resources
 
 Measured times per step:

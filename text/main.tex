@@ -80,6 +80,18 @@ The statistics come from the Rust engine of STL-Dev-MPI through a PyTorch \citep
 
 The amortised denoiser is compared with the method it replaces: the same loss minimised over the pixels of $u$, for one observation, without a network. We start from $u=d$ and use the native L-BFGS of STL-Dev-MPI (strong-Wolfe line search) on $u/{\rm std}(d)$. The objective is the sum, over the observations of the two fields, of exactly the weighted loss terms of the network run it is compared with, computed by the same code. The noise realisations are drawn from the training simulations. They are fixed within a round of $50$ iterations, so that the loss is deterministic for the line search, and redrawn between the ten rounds. Unlike \citet{delouis2022}, no noise bias is frozen: $\Phi(u+n_i)$ is recomputed at the current $u$ at every evaluation of the loss, and the gradient goes through it, in this reference as in the network runs. The evaluation after each round is the one of the network runs.
 
+\subsection{Frozen noise biases, spectrum loss and conditioning}\label{sec:variants}
+
+\paragraph{Noise biases.} In the runs above the model side of every term is the average over $B=4$ draws, at the current $u$, of the statistics of $u$ plus noise, with the gradient through it: the noise bias is never formed. In \citet{delouis2022} the bias of each term, $B_k=\langle\Phi_k(u_0+n_i)\rangle-\Phi_k(u_0)$, is estimated at a fixed map $u_0$ with many realisations and frozen, the model being $\Phi_k(u)+B_k$ with the gradient through $\Phi_k(u)$ only. We implement this scheme with $M=40$ realisations, the bias being re-estimated at the start of every L-BFGS round, or every 50 steps from the current output of the network.
+
+\paragraph{Spectrum loss.} The full-sky ergodic weights of the scattering statistics are dominated by the Galactic plane, so that the power at high latitude is hardly constrained. We add a term on the binned half-mission cross spectrum,
+\begin{equation}
+  L_{\rm cl}:\ C_b(m\,d_1,m\,d_2)\ \text{vs}\ \langle C_b(m(u+\tilde n_1),m(u+\tilde n_2))\rangle,
+\end{equation}
+for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$ and $45^\circ$ (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$ to $2\nside-1$, each weighted by the Gaussian variance of the target. The spectra come from a differentiable ring-FFT spherical harmonic transform adapted from FOSCAT and healpix-analyse. They are the spectra of $Q$ and $U$ separately, as the network treats them; E and B spectra need a joint $(Q,U)$ network.
+
+\paragraph{Conditioning on the dust intensity.} The network can only infer the local signal-to-noise ratio from $d$, and removes almost nothing where the dust is bright (Sect.~\ref{sec:real}). We give it $\log I_{857}$, standardised, as an additional input, concatenated to the input and, averaged down the pyramid, to the input of every decoder level, so that the decoding depends on the local dust intensity. Since the 857\,GHz map is also the template of $L_3$, the residual $d-u$ must be checked to remain uncorrelated with it.
+
 \subsection{Data and protocol}
 
 The sky is the \textit{Planck} PR3 353\,GHz full-mission polarisation map \citep[PSB detectors;][]{planck2020hfi}, in $\mu{\rm K}_{\rm CMB}$, degraded to $\nside=64$ by NESTED parent means. Its $Q$ and $U$ maps have standard deviations of 247 and 126\,$\mu$K. We consider two noise models, both white:
@@ -232,7 +244,7 @@ In the mock tests of Sects.~3 and \ref{sec:n256} the ``clean'' sky is the PR3 ma
 
 \paragraph{Spectra.} Over $|b|>30^\circ$ (Fig.~\ref{fig:real_spectra}), the EE and BB spectra of $u$ equal the noise-free cross spectrum $d_1\times d_2$ to within 1\% for $30\le\ell<60$ and to within 6\% (EE) and 1\% (BB) for $100\le\ell<200$, where $d$ is 36\% (EE) and 53\% (BB) above it. At smaller scales $u$ falls below the cross spectrum: for $200\le\ell<300$ it reaches 64\% (EE) and 85\% (BB) of it, and 54\% and 90\% for $300\le\ell<450$, while $d$ is 2 to 7 times above. Correspondingly, the spectrum of $d-u$ is within 20\% of the noise spectrum for $100\le\ell<300$ and 35--40\% above it for $300\le\ell<450$: at the scales where the noise dominates, the network removes part of the dust with the noise. At $\ell<60$, where the dust dominates by two orders of magnitude, $d-u$ is 30--40\% below the noise.
 
-The per-map L-BFGS minimisation of the same loss (Sect.~\ref{sec:lbfgs}), and runs with the noise biases frozen between batches of iterations as in \citet{delouis2022}, are in progress; they will tell how much of the remaining differences comes from the amortisation and how much from the loss.
+The per-map L-BFGS minimisation of the same loss (Sect.~\ref{sec:lbfgs}), and the runs with frozen noise biases, the spectrum loss and the 857\,GHz conditioning (Sect.~\ref{sec:variants}), are in progress; they will tell how much of the remaining differences comes from the amortisation and how much from the loss.
 
 \section{Discussion and next steps}
 

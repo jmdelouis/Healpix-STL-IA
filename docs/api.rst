@@ -28,6 +28,18 @@ Losses and statistics
    stlia.stl_torch.as_real
    stlia.stl_torch.native_pixels
 
+Spherical harmonics and spectra
+-------------------------------
+
+.. autosummary::
+   :toctree: generated
+
+   stlia.sht.HEALPixSHT
+   stlia.spectra.BinnedSpectra
+   stlia.spectra.SpectrumLoss
+   stlia.spectra.galactic_mask
+   stlia.spectra.bin_edges
+
 Disc patches
 ------------
 
