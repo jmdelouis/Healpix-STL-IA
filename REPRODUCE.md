@@ -168,10 +168,9 @@ This submits the 20 runs listed in the script, which are independent of one anot
 | `p256_l123` | Sect. 4, Table 2 | 32 CPU cores | 2 h 50 |
 | `r256_dl123` | the PR3 maps denoised | GPU | 2 h 50 |
 | `l256_dl123` | the PR3 maps denoised without a network: the same losses minimised over the pixels by the L-BFGS of STL-Dev-MPI (reference) | GPU | about 1.5 h (estimate) |
-| `l256_fz` | L-BFGS reference with frozen noise biases (Delouis et al. 2022) | GPU | not yet measured |
 | `r256_fz` | network, frozen noise biases | GPU | not yet measured |
 | `r256_fz_cl857` | network, frozen biases, spectrum loss `cl` and 857 GHz conditioning | GPU | not yet measured |
-| `l256_fz_cl` | L-BFGS reference, frozen biases and spectrum loss | GPU | not yet measured |
+| `l256_fz_cl` | L-BFGS reference, frozen biases and spectrum loss (masks up to 60 deg) | GPU | 1 h 09 |
 | `r256_cl857` | network, live biases, spectrum loss `cl` and 857 GHz conditioning | GPU | not yet measured |
 | `l256_cl` | L-BFGS reference, live biases and spectrum loss | GPU | not yet measured |
 | `r256_native` | as `r256_fz`, with the native U-Net of STL-Dev-MPI (Rust, `NativeUNet`, b580210 built in `$R/stl_nu`; `scripts/train_native.slurm`) | GPU | 51 min |

@@ -85,7 +85,7 @@ Hence ({func}`stlia.train_denoise.unbiased`, with $T$ treated as noise-free):
 
 A check with the engine (a Gaussian map at $\nside=16$, white noise of half its rms, 200 draws) agrees. The mean over the draws of the coefficients without bias departs from the noise-free value by 1.0 to 1.2 standard errors (median), against 10 to 18 for $S_1$, 19 for the auto $S_2$, 4 to 7 for $S_4$ and 2.3 to 2.8 for the biased $S_3$.
 
-With `frozen`, $B_k$ is estimated only for the coefficients with a noise bias, and is zero for the others. An estimate there would be zero up to the scatter of the $M$ draws, and subtracting it would only add that scatter. `--bias-all` estimates every coefficient: the run `l256_fz` used it. With `live`, all scattering coefficients are averaged over the draws, which only add scatter to the unbiased ones. The `cl` term never uses draws (see *Spectrum loss*).
+With `frozen`, $B_k$ is estimated only for the coefficients with a noise bias, and is zero for the others. An estimate there would be zero up to the scatter of the $M$ draws, and subtracting it would only add that scatter. `--bias-all` estimates every coefficient. With `live`, all scattering coefficients are averaged over the draws, which only add scatter to the unbiased ones. The `cl` term never uses draws (see *Spectrum loss*).
 
 ## Masked statistics
 
