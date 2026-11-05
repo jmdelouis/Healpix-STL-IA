@@ -128,7 +128,21 @@ $Q$ and $U$ are defined in a frame of reference on the sphere, and their scatter
 
 $$ (E, B) = \mathcal{T}(Q, U),\qquad \mathcal{T}:\ (Q,U)\xrightarrow{\ \text{spin-2 analysis}\ }(a^E_{\ell m}, a^B_{\ell m})\xrightarrow{\ \text{synthesis}\ }(E, B), $$
 
-({class}`~stlia.polar.EBTransform`, the transforms of {mod}`stlia.sht`, to $\ell_{\max}=3N_{\rm side}-1$, as healpy's `map2alm(pol=True)` and `alm2map`). The network still maps $(Q, U)$ to $(Q, U)$; $\mathcal{T}$ is applied to its output, with the gradient through it, and once to the observations and to every noise simulation (the Q and U noises of the same simulation together). $\mathcal{T}$ is linear, so a noise added to $(Q, U)$ is a noise added to $(E, B)$: the noise biases (Table above) are unchanged. With `cl` (`--cl-spin 0`), the spectrum term is then on the spectra of the E and B maps, i.e. the EE and BB spectra. The spin-2 harmonic tables come from the three-term recurrence of the Wigner $d^\ell_{m,\mp2}(\theta)$ in $\ell$, rescaled per ring against underflow, built once per run; they take a few GB of GPU memory at $N_{\rm side}=256$. These transforms are the reference for the spin-2 kernels of the STL-Dev-MPI engine (in preparation), which will give the wavelet coefficients of E and B from $(Q, U)$ by local convolutions with weights computed once, as FOSCAT does, without a transform at every step.
+({class}`~stlia.polar.EBTransform`, the transforms of {mod}`stlia.sht`, to $\ell_{\max}=3N_{\rm side}-1$, as healpy's `map2alm(pol=True)` and `alm2map`). The network still maps $(Q, U)$ to $(Q, U)$; $\mathcal{T}$ is applied to its output, with the gradient through it, and once to the observations and to every noise simulation (the Q and U noises of the same simulation together). $\mathcal{T}$ is linear, so a noise added to $(Q, U)$ is a noise added to $(E, B)$: the noise biases (Table above) are unchanged. With `cl` (`--cl-spin 0`), the spectrum term is then on the spectra of the E and B maps, i.e. the EE and BB spectra. The spin-2 harmonic tables come from the three-term recurrence of the Wigner $d^\ell_{m,\mp2}(\theta)$ in $\ell$, rescaled per ring against underflow, built once per run; they take a few GB of GPU memory at $N_{\rm side}=256$. These transforms are exact but global: every E or B pixel depends on the whole sky, which rules out masks with holes, patches and high resolutions.
+
+### Local spin-2 statistics: $\bar\eth^2$ in the engine
+
+With `--pol-stats chi` (`--joint`), the statistics come from the spin-2 engine of STL-Dev-MPI (`NativeEngine(spin=2)`, branch `claude/spin-eth`). It computes
+
+$$ \chi_E + i\chi_B = \bar\eth^2 (Q + iU), $$
+
+a local spin-2 derivative, exactly frame-independent: harmonically, $\chi_{E,B}$ is $E, B$ weighted by $\sqrt{(\ell+2)!/(\ell-2)!}\simeq\ell^2$. On every pixel, the stencil uses the pixels within two rings, with $(Q,U)$ parallel-transported to the centre, and weights exact on polynomials of degree 4. The resulting E→B leakage is 0.5 %, and $\chi_E$ is within 1.3 % of the exact $\bar\eth^2$ on a smooth field. $\bar\eth^2$ is applied at the finest level only. The engine's scalar pyramid then carries $\chi_E$ and $\chi_B$, and the gradient goes back through it, then through the transpose of the stencil. Within the narrow band of each wavelet, the $\ell^2$ weighting is nearly a constant, which the per-coefficient ergodic normalisation absorbs.
+
+Against the same engine applied to the exact $\chi$ (spin-2 SHT), the statistics agree to:
+- 0.4–3 % on $S_1$ and $S_2$ for $j\ge1$ (nside 64, also on the Planck 353 maps);
+- 6–14 % on $S_3$ and $S_4$ with $j_1>0$.
+
+The finest scale $j=0$ is off by 30–50 % at the pixel scale, where the SHT reference itself is off by 12 %. The stencil is local, so masks with holes work: with masks eroded by the stencil radius, a 15° hole changes the masked $S_1$ and $S_2$ by less than 0.03 %. The cross statistics in spin 2, needed by `l1`, `l2` and `l3`, are not in the engine yet: `chi` takes the data term, plus `cl` on EE and BB (`--cl-spin 2`).
 
 ## Conditioning on the dust intensity
 

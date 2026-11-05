@@ -48,3 +48,8 @@ def test_train_denoise_eb_sigma_warmup_options():
                                            "--cond", "log857+sigma", "--bias", "frozen", "--bias-warmup", "500",
                                            "--init", "run/model.pt"])
     assert (a.pol_stats, a.cond, a.bias_warmup, a.init) == ("eb", "log857+sigma", 500, "run/model.pt")
+
+
+def test_train_denoise_chi_option():
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--joint", "--pol-stats", "chi"])
+    assert a.pol_stats == "chi"
