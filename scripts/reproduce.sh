@@ -54,6 +54,12 @@ runs)
     if [ -n "$GPU_OPTS" ]; then
         STL=stl_nu sbatch $GPU_OPTS -J r256_native -o $RUNS/slurm.%j.log scripts/train_native.slurm r256_native             --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --bias-every 50 --bias-realizations 40             --loss data=1,l1=1,l2=1,l3=1 --sims 10-49 --cond none --eval-every 500 --engine-cache-bytes 0
     fi
+    # spread between trainings: r256_native again with seeds 1-3 (seed 0 is r256_native)
+    if [ -n "$GPU_OPTS" ]; then
+        for s in 1 2 3; do
+            STL=stl_nu sbatch $GPU_OPTS -J r256_native_s$s -o $RUNS/slurm.%j.log scripts/train_native.slurm r256_native_s$s                 --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --bias-every 50 --bias-realizations 40                 --loss data=1,l1=1,l2=1,l3=1 --sims 10-49 --cond none --eval-every 500 --engine-cache-bytes 0 --seed $s
+        done
+    fi
     # masked statistics (STL-Dev-MPI >= 9038114, built in $R/stl_mk: STL=stl_mk)
     STL=stl_mk gpu r256_fz_cl857_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45         --stat-masks 0,20,30,45 --cond log857 --bias frozen --bias-realizations 40 --bias-every 50 $common
     # the best configuration (r256_fz_cl857_mk) with the local noise level as a second conditioning map and

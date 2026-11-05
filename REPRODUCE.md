@@ -174,7 +174,8 @@ This submits the 20 runs listed in the script, which are independent of one anot
 | `l256_fz_cl` | L-BFGS reference, frozen biases and spectrum loss | GPU | not yet measured |
 | `r256_cl857` | network, live biases, spectrum loss `cl` and 857 GHz conditioning | GPU | not yet measured |
 | `l256_cl` | L-BFGS reference, live biases and spectrum loss | GPU | not yet measured |
-| `r256_native` | as `r256_fz`, with the native U-Net of STL-Dev-MPI (Rust, `NativeUNet`, b580210 built in `$R/stl_nu`; `scripts/train_native.slurm`) | GPU | not yet measured |
+| `r256_native` | as `r256_fz`, with the native U-Net of STL-Dev-MPI (Rust, `NativeUNet`, b580210 built in `$R/stl_nu`; `scripts/train_native.slurm`) | GPU | 51 min |
+| `r256_native_s{1,2,3}` | as `r256_native`, seeds 1-3 (network initialisation and noise draws): the spread between trainings | GPU | about 51 min each |
 | `r256_joint_eebb` | one network for (Q, U) (`--joint`), live biases, EE/BB spectrum loss (`--cl-spin 2`, STL-Dev-MPI 92f2aef built in `$R/stl_sp2`) and 857 GHz conditioning | GPU | not yet measured |
 | `r256_fz_cl857_mk` | as `r256_fz_cl857`, with the scattering statistics also under the masks 0, 20, 30, 45° (`--stat-masks`, STL-Dev-MPI 9038114 built in `$R/stl_mk`) | GPU | 3 h 35 |
 | `r256_sig_wu` | as `r256_fz_cl857_mk`, with the noise level as a second conditioning map (`--cond log857+sigma`), 500 steps of live biases first (`--bias-warmup 500`) and the spectrum mask at 60° (`$R/stl_sp2`) | GPU | not yet measured |
