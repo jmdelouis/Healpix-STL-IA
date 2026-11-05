@@ -15,6 +15,7 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 - **No noise bias on the spectrum loss.** The model of `cl` is now `C_b(u, u)`, with live and frozen biases alike. The half-mission noises are independent, so `<C_b(u + n1, u + n2)> = C_b(u, u)`. Before, the live model averaged noise draws, which only added scatter to the gradient. The frozen model subtracted an estimated bias, close to zero but noisy, which could make the solution drift. Documentation updated: method (*Spectrum loss*), paper Sect. 2.4.
 
 ### Added
+- **High-latitude spectra.** `scripts/make_figure_highlat.py` draws the ratio of the EE and BB spectra of u to the half-mission cross spectrum over |b| > 30 and 60 deg, for several runs; `scripts/reproduce.sh figures` makes it for `r256_fz_cl857` and `l256_fz_cl` (paper: new figure in Sect. 5).
 - **Spectrum terms `tcl` and `rcl`.**
   - `tcl`: the cross spectrum of the 857 GHz map with `u`, against that with `d`. The target is unbiased, since the noise is independent of the template. It gives TQ/TU, or TE/TB with `--pol-stats eb`.
   - `rcl`: the spectrum of `d - u` against that of the noise. On real data, the target is the noise of `d` itself, `C(d, d) - C(d1, d2)` (`NoiseSpectrumLoss.from_halves`). It is consistent with the target of `cl`, whereas the half-mission difference overestimates the noise of `d` by about 10 %. The runs `r1k_ref` and `r1k_res` (1000 steps) are added to `scripts/reproduce.sh` and `REPRODUCE.md`.

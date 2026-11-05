@@ -83,6 +83,8 @@ figures)
     for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi r1k_ref r1k_res; do
         $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
+    $PY scripts/make_figure_highlat.py $R/data/maps $RUNS/highlat_spectra.pdf \
+        $RUNS/r256_fz_cl857:network $RUNS/l256_fz_cl:L-BFGS
     ls $RUNS/figs64 $RUNS/figs256 $RUNS/figs_real
     ;;
 *)
