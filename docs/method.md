@@ -63,6 +63,8 @@ is estimated with $M$ = `--bias-realizations` draws (40 by default). The model i
 
 The loss needs no noise draw between two estimates, and each step is cheaper. The scheme needs fixed observations: `--real`, or `--optimizer lbfgs`.
 
+**Warm-up.** The first estimate is made at the first output, which still contains the noise: the bias of a noisy map is not the bias of the clean map the training leads to. With `--bias-warmup N`, the first $N$ steps (L-BFGS: rounds) use live biases, and the first frozen estimate is made at an already denoised $u$. `--init RUN/model.pt` starts a network from the weights of a previous run instead, for example a run with live biases.
+
 ### Which coefficients have a noise bias
 
 The bias $\langle\Phi_k(u+n)\rangle-\Phi_k(u)$ of a coefficient is exactly zero when the noise enters it only linearly, since the noise has zero mean and the half-mission noises are independent. In the cross statistics of the engine:
@@ -120,6 +122,14 @@ On a T4 at $\nside=256$, the spectra and gradient of 4 pairs of maps under 3 mas
 
 With `--joint` (`--real` only), one network ({class}`~stlia.unet.UNet` with `maps=2`) takes the pair $(Q, U)$ and returns $(u_Q, u_U)$, with one input scale for both. Every step trains both fields: the scattering terms of each are summed, and the EE/BB spectrum term constrains the pair. Each field differentiates its terms in turn, because the engines keep the state of their last forward only. The gradients add up on the output, and go back through the network once.
 
+### Statistics of the E and B maps
+
+$Q$ and $U$ are defined in a frame of reference on the sphere, and their scattering statistics taken separately depend on it; those of the E and B maps do not. FOSCAT computes its spin-2 statistics with wavelets built from spin-2 harmonics, which give the wavelet coefficients of E and B directly from $(Q, U)$. On the full sky this is the scalar scattering of the E and B maps. With `--pol-stats eb` (`--joint`), every term is computed on
+
+$$ (E, B) = \mathcal{T}(Q, U),\qquad \mathcal{T}:\ (Q,U)\xrightarrow{\ \text{spin-2 analysis}\ }(a^E_{\ell m}, a^B_{\ell m})\xrightarrow{\ \text{synthesis}\ }(E, B), $$
+
+({class}`~stlia.polar.EBTransform`, the transforms of {mod}`stlia.sht`, to $\ell_{\max}=3N_{\rm side}-1$, as healpy's `map2alm(pol=True)` and `alm2map`). The network still maps $(Q, U)$ to $(Q, U)$; $\mathcal{T}$ is applied to its output, with the gradient through it, and once to the observations and to every noise simulation (the Q and U noises of the same simulation together). $\mathcal{T}$ is linear, so a noise added to $(Q, U)$ is a noise added to $(E, B)$: the noise biases (Table above) are unchanged. With `cl` (`--cl-spin 0`), the spectrum term is then on the spectra of the E and B maps, i.e. the EE and BB spectra. The spin-2 harmonic tables come from the three-term recurrence of the Wigner $d^\ell_{m,\mp2}(\theta)$ in $\ell$, rescaled per ring against underflow, built once per run; they take a few GB of GPU memory at $N_{\rm side}=256$. These transforms are the reference for the spin-2 kernels of the STL-Dev-MPI engine (in preparation), which will give the wavelet coefficients of E and B from $(Q, U)$ by local convolutions with weights computed once, as FOSCAT does, without a transform at every step.
+
 ## Conditioning on the dust intensity
 
 With `--cond log857`, the network also receives $\log I_{857}$, standardised: the 857 GHz intensity, a tracer of the dust and hence of the local signal-to-noise ratio. This map is concatenated:
@@ -130,6 +140,8 @@ With `--cond log857`, the network also receives $\log I_{857}$, standardised: th
 The decoding, i.e. how much is removed, can then depend on the local dust intensity. The untrained network is still the identity.
 
 The 857 GHz map is also the template of `l3`. Check that the network does not copy its morphology into $u$: the residual $d-u$ must remain uncorrelated with it.
+
+With `--cond sigma`, the conditioning map is the log of the local noise level, $\tfrac12\log\langle n_Q^2+n_U^2\rangle/2$ over the training simulations, standardised: the network then knows the signal-to-noise ratio from the noise side, which the scanning strategy sets. `--cond log857+sigma` gives both maps.
 
 ## The losses of Delouis et al. (2022)
 

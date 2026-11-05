@@ -83,6 +83,15 @@ stlia-train-denoise --data maps --out runs/real256_joint --nside 256 --real --jo
 
 The EE/BB spectra need the `SpectrumEngine` of STL-Dev-MPI with spin spectra (commit 92f2aef or later). They run on CPU threads (`STL_THREADS`).
 
+With `--pol-stats eb`, the terms are computed on the E and B maps of the output instead of Q and U, which makes them independent of the frame of Q and U (the spin-2 statistics of FOSCAT); the spectrum term (`--cl-spin 0`) is then on EE and BB:
+
+```bash
+stlia-train-denoise --data maps --out runs/real256_eb --nside 256 --real --joint --pol-stats eb \
+    --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45,60 --cond log857+sigma \
+    --bias frozen --bias-warmup 500 --stat-masks 0,20,30,45
+```
+
+`--cond sigma` adds the local noise level as a conditioning map, and `--bias-warmup 500` trains the first 500 steps with live biases before the first frozen estimate. `--init RUN/model.pt` starts from the weights of a previous run with the same network options.
 Add `--stat-masks 0,20,30,45` to average every scattering statistic under the four galactic masks as well. This needs STL-Dev-MPI 9038114 or later; see {doc}`../installation`.
 
 `--cond log857` reads `planck857_I_n<nside>.npy`, which is already needed by `l3`. With `--cl-backend torch`, the spectrum loss keeps its Legendre tables on the GPU: about 2 GB at $N_{\rm side}=256$, $\ell_{\max}=511$, in double precision. The `stl` backend stores no table.

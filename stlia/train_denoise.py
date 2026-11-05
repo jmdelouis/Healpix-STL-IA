@@ -164,6 +164,23 @@ class Noise:
                          for kd in kinds]
         self.rms = float(self.draw(64, test=True).square().mean().sqrt())
 
+    @classmethod
+    def eb_pair(cls, nq, nu, eb):
+        """The noises of the E and B maps (`stlia.polar.EBTransform` `eb`) of the
+        (Q, U) noise simulations of `nq`, `nu` (pr3sims: the same simulations,
+        in the same order, for Q and U)."""
+        assert nq.mode == nu.mode == "pr3sims", "--pol-stats eb needs --noise pr3sims"
+        out = [cls.__new__(cls) for _ in range(2)]
+        for n in out:
+            n.mode, n.dev, n.npix = nq.mode, nq.dev, nq.npix
+        for split in ("train", "test"):
+            pools = [eb.many(q, u) for q, u in zip(getattr(nq, split), getattr(nu, split))]
+            for i, n in enumerate(out):
+                setattr(n, split, [p[i] for p in pools])
+        for n in out:
+            n.rms = float(n.draw(64, test=True).square().mean().sqrt())
+        return out
+
     def draw(self, k, test=False, generator=None, hm=False):
         """`[k, npix]` full-mission noise; with `hm`, the triple (n, n1, n2) of
         the same simulations and signs (full and half missions)."""
@@ -216,14 +233,20 @@ def parser():
                         "the stl backend)")
     p.add_argument("--joint", action="store_true",
                    help="--real: one network denoises Q and U together (UNet(maps=2)); every step trains both")
+    p.add_argument("--pol-stats", default="qu", choices=["qu", "eb"],
+                   help="--joint: fields of the loss terms; qu, the Q and U maps; eb, the E and B maps of (Q, U) "
+                        "(stlia.polar, the spin-2 statistics of FOSCAT on the full sky), which do not depend on "
+                        "the frame of Q and U; with cl (spin 0), the spectra of the E and B maps")
     p.add_argument("--cl-backend", default="auto", choices=["auto", "torch", "stl"],
                    help="cl: spectra by the SpectrumEngine of STL-Dev-MPI (stl), by the transforms of stlia.sht "
                         "(torch), or by the engine when the installed STL-Dev-MPI has it (auto)")
     p.add_argument("--levels", type=int, default=None, help="levels of the U-Net (default: down to nside 8)")
     p.add_argument("--channels", default=None, help="channels per level, comma-separated (default: 32,64,96,128,...)")
-    p.add_argument("--cond", default="none", choices=["none", "log857"],
-                   help="conditioning map of the U-Net: log of the 857 GHz intensity, standardised, given at the "
-                        "input and to every decoder level (the decoding then depends on the local dust intensity)")
+    p.add_argument("--cond", default="none", choices=["none", "log857", "sigma", "log857+sigma"],
+                   help="conditioning maps of the U-Net, standardised, given at the input and to every decoder "
+                        "level: log857, the log of the 857 GHz intensity (local dust intensity); sigma, the log of "
+                        "the per-pixel noise level, the rms over the training simulations of the noise of the "
+                        "fields (sqrt of the mean of the Q and U variances: the local noise level)")
     p.add_argument("--conv", default="sphere", choices=["sphere", "faces"],
                    help="STL stencil on the sphere, or planar convolutions on the base faces (comparison only)")
     p.add_argument("--gauge", default="phi", choices=["phi", "cosmo"], help="orientation of the kernels")
@@ -252,6 +275,11 @@ def parser():
                         "bias is zero")
     p.add_argument("--bias-every", type=int, default=50,
                    help="frozen, network: steps between two bias estimates (L-BFGS: one per round)")
+    p.add_argument("--bias-warmup", type=int, default=0,
+                   help="frozen: the first steps (L-BFGS: rounds) with live biases, so that the first frozen "
+                        "estimate is made at a u already denoised")
+    p.add_argument("--init", default=None,
+                   help="model.pt of a previous run: start from its weights (same network options)")
     return p
 
 
@@ -299,6 +327,9 @@ def main(argv=None):
             return cl_cache[key]
     scalar_cl = weights["cl"] and a.cl_spin == 0  # per field; spin 2: one term for (Q, U)
     assert not a.joint or (a.real and a.optimizer == "adam"), "--joint: --real and the adam optimizer"
+    assert a.pol_stats == "qu" or (a.joint and a.cl_spin == 0), \
+        "--pol-stats eb: --joint, and cl on the E and B maps (--cl-spin 0)"
+    assert a.bias_warmup == 0 or a.bias == "frozen", "--bias-warmup: --bias frozen"
     if a.halfmission:
         T = torch.as_tensor(np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy")), device=dev)
     a.noise_rel_std = a.noise_rel * float(train_sky.std())
@@ -450,13 +481,24 @@ def main(argv=None):
         return out
 
     channels = [int(c) for c in a.channels.split(",")] if a.channels else None
-    cond = None
-    if a.cond == "log857":
+    conds = []
+    if "log857" in a.cond:
         i857 = np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy"))
-        c = np.log(np.clip(i857, np.percentile(i857[i857 > 0], 0.1), None))
-        cond = torch.as_tensor((c - c.mean()) / c.std(), device=dev, dtype=torch.float32)[None, None]
+        conds.append(np.log(np.clip(i857, np.percentile(i857[i857 > 0], 0.1), None)))
+    if "sigma" in a.cond:
+        # local noise level: rms over the training simulations, Q and U variances averaged
+        assert a.noise == "pr3sims", "--cond sigma: --noise pr3sims"
+        var = torch.stack([n.train[0].square().mean(0) for n in noise.values()]).mean(0)
+        conds.append(0.5 * np.log(var.cpu().numpy()))
+    cond = None
+    if conds:
+        c = np.stack([(x - x.mean()) / x.std() for x in conds])
+        cond = torch.as_tensor(c, device=dev, dtype=torch.float32)[None]
     net = UNet(a.nside, levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz,
-               cond=0 if cond is None else 1, maps=2 if a.joint else 1).to(dev)
+               cond=len(conds), maps=2 if a.joint else 1).to(dev)
+    if a.init:
+        net.load_state_dict(torch.load(a.init, map_location=dev)["state"])
+        print(f"weights from {a.init}", flush=True)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
     nparams = sum(q.numel() for q in net.parameters())
@@ -486,6 +528,7 @@ def main(argv=None):
                  for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
     fields = list(fixed)
 
+    eb, qu_fields, fixed_qu, last_qu = None, [], {}, {}
     if a.joint:
         # one network for (Q, U): d2 [2, npix], and the EE/BB spectrum loss of (Q, U) (--cl-spin 2)
         d2 = torch.stack([fixed[f][1] for f in fields])
@@ -493,10 +536,33 @@ def main(argv=None):
         if weights["cl"] and a.cl_spin == 2:
             hm1, hm2 = (torch.stack([fixed[f][2][h] for f in fields]) for h in (0, 1))
             pol_loss = SpectrumLoss(spectra, hm1, hm2)
+        if a.pol_stats == "eb":
+            # the terms on (E, B): the observations, the noise pools and their ergodic
+            # variances are transformed once; the network still maps (Q, U) to (Q, U)
+            from stlia.polar import EBTransform
+            eb = EBTransform(a.nside, device=dev)
+            qu_fields, fixed_qu, noise_qu = list(fields), dict(fixed), dict(noise)
+            fields[:] = ["E", "B"]
+            s_eb, d_eb = (eb(torch.stack([fixed_qu[f][i] for f in qu_fields])) for i in (0, 1))
+            hm_eb = [eb(torch.stack([fixed_qu[f][2][h] for f in qu_fields])) for h in (0, 1)] \
+                if a.halfmission else None
+            fixed.clear()
+            for i, f in enumerate(fields):
+                fixed[f] = (s_eb[i], d_eb[i], (hm_eb[0][i], hm_eb[1][i]) if hm_eb else None)
+            noise.clear()
+            noise.update(zip(fields, Noise.eb_pair(noise_qu[qu_fields[0]], noise_qu[qu_fields[1]], eb)))
+            noise_var.clear()
+            noise_var.update({f: forward1(n.draw(1)[0])[1] for f, n in noise.items()})
+            rms.clear()
+            rms.update({f: n.rms for f, n in noise.items()})
+            print(f"statistics of the E and B maps; noise rms E {rms['E']:.4g}, B {rms['B']:.4g} uK", flush=True)
 
         def joint_outputs():
             with torch.no_grad():
                 u2 = net(d2[None], d2.std(), cond=cond)[0]
+            if eb is not None:
+                last_qu.update({f: u2[i] for i, f in enumerate(qu_fields)})
+                u2 = eb(u2)
             return {f: u2[i] for i, f in enumerate(fields)}
 
         def joint_terms(u2, bias=None):
@@ -533,6 +599,10 @@ def main(argv=None):
                 }
                 if save:
                     np.savez(os.path.join(a.out, f"eval_{f}.npz"), sky=s.cpu().numpy(), d=d.cpu().numpy(), u=u.cpu().numpy())
+            if save:  # --pol-stats eb: the (Q, U) maps as well, for the figures
+                for f, u in last_qu.items():
+                    s, d, _ = fixed_qu[f]
+                    np.savez(os.path.join(a.out, f"eval_{f}.npz"), sky=s.cpu().numpy(), d=d.cpu().numpy(), u=u.cpu().numpy())
         net.train()
         return out
 
@@ -549,7 +619,7 @@ def main(argv=None):
         frozen = (estimate_bias, frozen_losses)
     if a.joint:
         return run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bias if frozen else None,
-                         weights, evaluate, show, {"j": j, "coefficients": len(one.plan), "noise_rms": rms})
+                         weights, evaluate, show, {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, eb)
     if a.optimizer == "lbfgs":
         return run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev,
                          {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, frozen)
@@ -568,8 +638,8 @@ def main(argv=None):
             f = a.train_field
             d, hm = observe(f, train_sky)
         u = net(d[None], d.std(), cond=cond)[0]
-        if frozen:
-            if f not in bias or (step - 1) % a.bias_every < len(fields):
+        if frozen and step > a.bias_warmup:
+            if f not in bias or (step - 1 - a.bias_warmup) % a.bias_every < len(fields):
                 bias[f] = estimate_bias(u.detach(), f, generator=bias_gen)  # at the current network output
             terms = frozen_losses(u, d, f, bias[f], hm=hm)
         else:
@@ -599,11 +669,14 @@ def main(argv=None):
                    "evals": evals}, f, indent=1)
 
 
-def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bias, weights, evaluate, show, meta):
+def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bias, weights, evaluate, show, meta,
+              transform=None):
     """Adam training of a joint (Q, U) network on the fixed PR3 maps: every step
     denoises both fields at once and sums their terms (``--joint``).  With
     frozen biases, those of every field are re-estimated every `--bias-every`
-    steps at the current output."""
+    steps at the current output (after `--bias-warmup` steps with live biases).
+    `transform` (``--pol-stats eb``): the map from the (Q, U) output to the
+    fields of the terms."""
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
     nparams = sum(q.numel() for q in net.parameters())
@@ -615,17 +688,21 @@ def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bia
     started = time.time()
     for step in range(1, a.steps + 1):
         u2 = net(d2[None], d2.std(), cond=cond)[0]
-        if estimate_bias is not None and (step - 1) % a.bias_every == 0:
-            bias = {f: estimate_bias(u2[i].detach(), f, generator=bias_gen) for i, f in enumerate(fields)}
         x = u2.detach().requires_grad_()
+        y = x if transform is None else transform(x)  # the fields of the terms
+        z = y.detach().requires_grad_()
+        if estimate_bias is not None and step > a.bias_warmup and (step - 1 - a.bias_warmup) % a.bias_every == 0:
+            bias = {f: estimate_bias(z[i].detach(), f, generator=bias_gen) for i, f in enumerate(fields)}
         terms = {}
-        for part in joint_terms(x, bias):
-            sum(weights[k] * v for k, v in part.items()).backward()  # gradient into x.grad
+        for part in joint_terms(z, bias):
+            sum(weights[k] * v for k, v in part.items()).backward()  # gradient into z.grad
             for k, v in part.items():
                 terms[k] = terms.get(k, 0) + v.detach()
         loss = sum(weights[k] * v for k, v in terms.items())
+        if transform is not None:
+            y.backward(z.grad)  # through the transform, into x.grad
         opt.zero_grad(set_to_none=True)
-        u2.backward(x.grad)  # one backward through the network
+        u2.backward(z.grad if transform is None else x.grad)  # one backward through the network
         opt.step()
         sched.step()
         if step % a.log_every == 0 or step == 1:
@@ -678,7 +755,8 @@ def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta, froz
     for rnd in range(1, a.lbfgs_rounds + 1):
         seed = 1000003 * (a.seed + 1) + rnd
         last = {}
-        if frozen:
+        use_frozen = frozen and rnd > a.bias_warmup
+        if use_frozen:
             g = torch.Generator(device=dev).manual_seed(seed)
             bias = {f: frozen[0](torch.as_tensor(x[i] * scale[i], device=dev), f, generator=g)
                     for i, f in enumerate(fields)}
@@ -688,7 +766,7 @@ def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta, froz
             total, parts = 0.0, {}
             for i, f in enumerate(fields):
                 _, d, hm = fixed[f]
-                if frozen:
+                if use_frozen:
                     terms = frozen[1](u[i], d, f, bias[f], hm=hm)
                 else:
                     g = torch.Generator(device=dev).manual_seed(seed + i)  # the same draws at every evaluation of the round

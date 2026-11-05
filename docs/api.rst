@@ -35,6 +35,7 @@ Spherical harmonics and spectra
    :toctree: generated
 
    stlia.sht.HEALPixSHT
+   stlia.polar.EBTransform
    stlia.spectra.BinnedSpectra
    stlia.spectra.SpectrumLoss
    stlia.spectra.galactic_mask

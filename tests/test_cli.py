@@ -39,3 +39,12 @@ def test_train_denoise_stat_masks_option():
     assert train_denoise.parser().parse_args(["--data", "D", "--out", "O"]).stat_masks is None
     a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--stat-masks", "0,20,30,45"])
     assert a.stat_masks == "0,20,30,45"
+
+
+def test_train_denoise_eb_sigma_warmup_options():
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O"])
+    assert (a.pol_stats, a.bias_warmup, a.init) == ("qu", 0, None)
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--joint", "--pol-stats", "eb",
+                                           "--cond", "log857+sigma", "--bias", "frozen", "--bias-warmup", "500",
+                                           "--init", "run/model.pt"])
+    assert (a.pol_stats, a.cond, a.bias_warmup, a.init) == ("eb", "log857+sigma", 500, "run/model.pt")

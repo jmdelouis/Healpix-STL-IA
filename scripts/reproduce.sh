@@ -56,14 +56,18 @@ runs)
     fi
     # masked statistics (STL-Dev-MPI >= 9038114, built in $R/stl_mk: STL=stl_mk)
     STL=stl_mk gpu r256_fz_cl857_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45         --stat-masks 0,20,30,45 --cond log857 --bias frozen --bias-realizations 40 --bias-every 50 $common
-    STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
+    # the best configuration (r256_fz_cl857_mk) with the local noise level as a second conditioning map and
+    # 500 steps of live biases first; then the same as one (Q, U) network with every term on the E and B maps
+    STL=stl_sp2 gpu r256_sig_wu --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45,60         --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500 --bias-realizations 40 --bias-every 50 $common
+    STL=stl_sp2 gpu r256_eb --nside 256 --real --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45,60         --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500 --bias-realizations 40 --bias-every 50 $common
+    STL=stl_mk gpu l256_fz_mk--nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
     $PY scripts/make_figures.py $RUNS $RUNS/figs64
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256
     $PY scripts/make_figures_real.py $RUNS/r256_dl123 $R/data/maps $RUNS/figs_real
     $PY scripts/make_figures_real.py $RUNS/l256_dl123 $R/data/maps $RUNS/figs_lbfgs
-    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk; do
+    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb; do
         $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
     ls $RUNS/figs64 $RUNS/figs256 $RUNS/figs_real

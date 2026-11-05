@@ -175,7 +175,9 @@ This submits the 20 runs listed in the script, which are independent of one anot
 | `l256_cl` | L-BFGS reference, live biases and spectrum loss | GPU | not yet measured |
 | `r256_native` | as `r256_fz`, with the native U-Net of STL-Dev-MPI (Rust, `NativeUNet`, b580210 built in `$R/stl_nu`; `scripts/train_native.slurm`) | GPU | not yet measured |
 | `r256_joint_eebb` | one network for (Q, U) (`--joint`), live biases, EE/BB spectrum loss (`--cl-spin 2`, STL-Dev-MPI 92f2aef built in `$R/stl_sp2`) and 857 GHz conditioning | GPU | not yet measured |
-| `r256_fz_cl857_mk` | as `r256_fz_cl857`, with the scattering statistics also under the masks 0, 20, 30, 45° (`--stat-masks`, STL-Dev-MPI 9038114 built in `$R/stl_mk`) | GPU | not yet measured |
+| `r256_fz_cl857_mk` | as `r256_fz_cl857`, with the scattering statistics also under the masks 0, 20, 30, 45° (`--stat-masks`, STL-Dev-MPI 9038114 built in `$R/stl_mk`) | GPU | 3 h 35 |
+| `r256_sig_wu` | as `r256_fz_cl857_mk`, with the noise level as a second conditioning map (`--cond log857+sigma`), 500 steps of live biases first (`--bias-warmup 500`) and the spectrum mask at 60° (`$R/stl_sp2`) | GPU | not yet measured |
+| `r256_eb` | as `r256_sig_wu`, one (Q, U) network with every term on the E and B maps (`--joint --pol-stats eb`, spin-2 transforms of `stlia.sht`; about 14 GB more GPU memory) | GPU | not yet measured |
 | `l256_fz_mk` | L-BFGS reference, frozen biases, masked statistics | GPU | not yet measured |
 
 `p256_l123` can instead use the GPU disc engine, with the same options:

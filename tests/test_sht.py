@@ -97,3 +97,18 @@ def test_engine_ee_bb_match_healpy():
         cl = hp.anafast(ring(a), ring(b), pol=True, lmax=lmax, iter=0)[1:3] / np.mean(w ** 2)
         ref = cl @ spec.binning.numpy().T
         np.testing.assert_allclose(got[k], ref, rtol=1e-8, atol=1e-10 * np.abs(ref).max())
+
+
+def test_eb_maps_match_healpy():
+    from stlia.polar import EBTransform
+    q, u = nest_map(5), nest_map(6)
+    eb = EBTransform(NSIDE, device="cpu", dtype=torch.float64)
+    qu = torch.tensor(np.stack([q, u]), requires_grad=True)
+    out = eb(qu)
+    alm = hp.map2alm([np.zeros_like(q), hp.reorder(q, n2r=True), hp.reorder(u, n2r=True)],
+                     lmax=3 * NSIDE - 1, iter=0, pol=True)
+    for k in (0, 1):
+        ref = hp.reorder(hp.alm2map(alm[k + 1], NSIDE, lmax=3 * NSIDE - 1), r2n=True)
+        np.testing.assert_allclose(out[k].detach().numpy(), ref, atol=1e-8 * np.abs(ref).max())
+    out.square().sum().backward()  # differentiable with respect to (Q, U)
+    assert torch.isfinite(qu.grad).all() and qu.grad.abs().sum() > 0

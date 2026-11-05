@@ -84,6 +84,10 @@ try:
 except ImportError:
     _HAS_SPHERICAL = False
 
+# How the spin-weighted harmonic tables are built: "recursion" (Wigner-d recurrence in
+# numpy, the default) or "spherical" (the packages quaternionic and spherical, much slower).
+_SPIN_TABLES = "recursion"
+
 
 ArrayLike = Union[np.ndarray, torch.Tensor]
 
@@ -174,6 +178,60 @@ def _compute_legendre_m(
             ratio[ell - m, 0]     += log_lim
 
     return res * np.exp(ratio) * math.sqrt(4.0 * math.pi) + 0j
+
+
+def _wigner_d_rows(theta: np.ndarray, a: int, b: int, lmax: int, lmin: int) -> np.ndarray:
+    """
+    √((2l+1)/4π) · d^l_{a,b}(θ) for l = lmin…lmax (rows) at the colatitudes θ
+    (columns), zero for l < max(|a|, |b|).
+
+    d^l_{a,b} with the convention of the Wikipedia "Wigner D-matrix" formula
+    (first index a, second b).  The start l0 = max(|a|, |b|) is the closed form,
+    in logarithms; then the three-term recurrence in l, on values rescaled
+    per ring so that neither the start (as small as sin(θ/2)^(2 l0)) nor the
+    growth overflows.
+    """
+    R = theta.shape[0]
+    out = np.zeros((lmax - lmin + 1, R), dtype=np.float64)
+    l0 = max(abs(a), abs(b))
+    assert l0 >= 1, "spin-weighted tables only (the recurrence divides by l)"
+    if l0 > lmax:
+        return out
+    lc, ls = np.log(np.cos(theta / 2)), np.log(np.sin(theta / 2))
+    lg = lambda n: math.lgamma(n + 1)  # log n!
+    # d^{l0}_{a,b}: sum over k of (-1)^(a-b+k) sqrt((j+a)!(j-a)!(j+b)!(j-b)!) /
+    # ((j+b-k)! k! (a-b+k)! (j-a-k)!) cos(θ/2)^(2j+b-a-2k) sin(θ/2)^(a-b+2k)
+    j = l0
+    pref = 0.5 * (lg(j + a) + lg(j - a) + lg(j + b) + lg(j - b))
+    logs, signs = [], []
+    for k in range(max(0, b - a), min(j + b, j - a) + 1):
+        logs.append(pref - lg(j + b - k) - lg(k) - lg(a - b + k) - lg(j - a - k)
+                    + (2 * j + b - a - 2 * k) * lc + (a - b + 2 * k) * ls)
+        signs.append(-1.0 if (a - b + k) % 2 else 1.0)
+    logs = np.array(logs)
+    top = logs.max(0)
+    val = (np.array(signs)[:, None] * np.exp(logs - top)).sum(0)  # d^{l0} = val · exp(top)
+    scale = top.copy()
+    prev = np.zeros(R)
+    cur = val
+    x = np.cos(theta)
+    big, lbig = 1e150, math.log(1e150)
+    for ell in range(l0, lmax + 1):
+        if ell >= lmin:
+            out[ell - lmin] = math.sqrt((2 * ell + 1) / (4 * math.pi)) * cur * np.exp(scale)
+        if ell == lmax:
+            break
+        # d^{l+1} from d^l and d^{l-1}
+        c1 = (2 * ell + 1) * (ell * (ell + 1) * x - a * b)
+        c0 = (ell + 1) * math.sqrt(max(ell * ell - a * a, 0) * max(ell * ell - b * b, 0))
+        den = ell * math.sqrt(((ell + 1) ** 2 - a * a) * ((ell + 1) ** 2 - b * b))
+        prev, cur = cur, (c1 * cur - c0 * prev) / den
+        over = np.abs(cur) > big
+        if over.any():
+            cur[over] /= big
+            prev[over] /= big
+            scale[over] += lbig
+    return out
 
 
 # ===========================================================================
@@ -343,6 +401,9 @@ class HEALPixSHT:
         """
         if spin in self._spin_Yp:
             return
+        if _SPIN_TABLES == "recursion":
+            self._ensure_spin_recursion(spin)
+            return
         if not _HAS_SPHERICAL:
             raise ImportError(
                 "Spin ≠ 0 transforms require 'quaternionic' and 'spherical'.\n"
@@ -381,10 +442,9 @@ class HEALPixSHT:
         # tables simultaneously, which:
         #   - is a no-op for spin=2  ((-1)^2=1)  → misleading coincidence
         #   - negates almE and flips Im(almE) for spin=1, making it wrong
-        iplus_w  = (wigner.sYlm( spin, R_q) * w).T.real   # (K_alm, R) ana +s
-        imoins_w = (wigner.sYlm(-spin, R_q) * w).T.real   # (K_alm, R) ana -s
-        iplus    =  wigner.sYlm( spin, R_q).T.real         # (K_alm, R) syn +s
-        imoins   =  wigner.sYlm(-spin, R_q).T.real         # (K_alm, R) syn -s
+        # synthesis tables; the analysis ones are the same times the pixel weight w
+        iplus  = np.ascontiguousarray(wigner.sYlm( spin, R_q).T.real)  # (K_alm, R) +s
+        imoins = np.ascontiguousarray(wigner.sYlm(-spin, R_q).T.real)  # (K_alm, R) -s
 
         Yp_dict  = {};  Ym_dict  = {}
         Yps_dict = {};  Yms_dict = {}
@@ -392,10 +452,29 @@ class HEALPixSHT:
         for m in range(lmax + 1):
             idx = np.array([wigner.Yindex(l, m) for l in range(m, lmax + 1)])
 
-            Yp_dict[m]  = torch.tensor(iplus_w[idx]  + 0j, dtype=self.cdtype, device=self.device)
-            Ym_dict[m]  = torch.tensor(imoins_w[idx] + 0j, dtype=self.cdtype, device=self.device)
-            Yps_dict[m] = torch.tensor(iplus[idx]    + 0j, dtype=self.cdtype, device=self.device)
-            Yms_dict[m] = torch.tensor(imoins[idx]   + 0j, dtype=self.cdtype, device=self.device)
+            Yps_dict[m] = torch.tensor(iplus[idx], device=self.device).to(self.cdtype)
+            Yms_dict[m] = torch.tensor(imoins[idx], device=self.device).to(self.cdtype)
+            Yp_dict[m]  = Yps_dict[m] * w
+            Ym_dict[m]  = Yms_dict[m] * w
+        del iplus, imoins
+
+    def _ensure_spin_recursion(self, spin: int) -> None:
+        """The tables of :meth:`_ensure_spin` from the Wigner-d recurrence
+        (:func:`_wigner_d_rows`): +s table sqrt((2l+1)/4pi) d^l_{m,-s}(theta),
+        -s table sqrt((2l+1)/4pi) d^l_{m,s}(theta), as the identification
+        documented in :meth:`_ensure_spin`."""
+        lmax = self.lmax
+        lth = self._ring_theta
+        w = 4.0 * math.pi / float(self.n_pix)
+        Yp_dict, Ym_dict, Yps_dict, Yms_dict = {}, {}, {}, {}
+        for m in range(lmax + 1):
+            for sgn, syn, ana in ((-1, Yps_dict, Yp_dict), (1, Yms_dict, Ym_dict)):
+                t = torch.tensor(_wigner_d_rows(lth, m, sgn * spin, lmax, m), device=self.device).to(self.cdtype)
+                syn[m], ana[m] = t, t * w
+        self._spin_Yp[spin] = Yp_dict
+        self._spin_Ym[spin] = Ym_dict
+        self._spin_Yp_syn[spin] = Yps_dict
+        self._spin_Ym_syn[spin] = Yms_dict
 
         self._spin_Yp[spin]     = Yp_dict
         self._spin_Ym[spin]     = Ym_dict
@@ -405,6 +484,20 @@ class HEALPixSHT:
     # ------------------------------------------------------------------
     # Ring FFT helpers  (differentiable)
     # ------------------------------------------------------------------
+
+    def _ring_groups(self):
+        """Rings grouped by length, cached: a list of (ring indices `[G]`, pixel
+        indices `[G, Nr]`) on the device, for the batched per-ring FFTs."""
+        if getattr(self, "_groups", None) is None:
+            groups = {}
+            for r in range(self.n_rings):
+                groups.setdefault(int(self._ring_n[r]), []).append(r)
+            self._groups = []
+            for nr, rings in groups.items():
+                pix = np.array([np.arange(self._ring_start[r], self._ring_start[r] + nr) for r in rings])
+                self._groups.append((torch.as_tensor(rings, device=self.device),
+                                     torch.as_tensor(pix, device=self.device)))
+        return self._groups
 
     def _rings_to_fft(self, im: torch.Tensor) -> torch.Tensor:
         """
@@ -419,29 +512,32 @@ class HEALPixSHT:
         ft : (B, R, lmax+1) complex Tensor.
              ft[b, r, m] = FFT_m(ring_r) × exp(-i·m·φ_0^r)
         """
-        lmax = self.lmax
-        R    = self.n_rings
-        B    = im.shape[0]
-
+        M = self.lmax + 1
+        B = im.shape[0]
         im = im if im.is_complex() else im.to(self.cdtype)
-
-        rows: List[torch.Tensor] = []
-        for r in range(R):
-            s   = int(self._ring_start[r])
-            Nr  = int(self._ring_n[r])
-            F   = torch.fft.fft(im[:, s : s + Nr], dim=-1)   # (B, Nr)
-
-            # Tile short rings to cover lmax+1 modes (same as FOSCAT comp_tf)
-            if Nr < lmax + 1:
-                repeat = (lmax + Nr) // Nr
-                F = F.repeat(1, repeat)
-            F = F[:, : lmax + 1]               # (B, lmax+1)
-            rows.append(F.unsqueeze(1))        # (B, 1, lmax+1)
-
-        ft = torch.cat(rows, dim=1)            # (B, R, lmax+1)
+        ft = torch.zeros(B, self.n_rings, M, dtype=self.cdtype, device=im.device)
+        modes = torch.arange(M, device=im.device)
+        for rings, pix in self._ring_groups():
+            F = torch.fft.fft(im[:, pix], dim=-1)           # (B, G, Nr)
+            # short rings: mode m is the DFT bin m mod Nr (same as FOSCAT comp_tf)
+            ft = ft.index_copy(1, rings, F[..., modes % pix.shape[1]])
         # Apply per-ring phase shift  exp(-i·m·φ_0^r)
-        ft = ft * self._phase[None]            # (B, R, lmax+1)
-        return ft
+        return ft * self._phase[None]                       # (B, R, lmax+1)
+
+    def _synthesis_index(self):
+        """Flat bins of the Hermitian ring spectra, cached: for every (r, m) the
+        pixel index of the positive frequency m mod Nr, and for m >= 1 that of the
+        negative frequency (Nr - m) mod Nr; and Nr per ring."""
+        if getattr(self, "_syn_idx", None) is None:
+            M = self.lmax + 1
+            nr = self._ring_n.astype(np.int64)[:, None]
+            st = self._ring_start.astype(np.int64)[:, None]
+            m = np.arange(M)[None]
+            pos = (st + m % nr).reshape(-1)
+            neg = (st + (nr - m[:, 1:]) % nr).reshape(-1)
+            self._syn_idx = (torch.as_tensor(pos, device=self.device), torch.as_tensor(neg, device=self.device),
+                             torch.as_tensor(self._ring_n.astype(np.float64), device=self.device))
+        return self._syn_idx
 
     def _fft_to_rings(self, ft_syn: torch.Tensor) -> torch.Tensor:
         """
@@ -457,50 +553,23 @@ class HEALPixSHT:
         Returns
         -------
         im : (B, N) real Tensor in RING order.
+
+        For a real map, f_j = G_0 + 2·Re[Σ_{m≥1} G_m e^{i2πmj/Nr}], G_m = ft_up[r, m]
+        (a_{l,-m} = (-1)^m ā_lm).  The full Hermitian spectrum of every ring is
+        H[m mod Nr] += Nr·G_m (all m) and H[(Nr - m) mod Nr] += Nr·Ḡ_m (m ≥ 1);
+        aliased modes of short rings accumulate, which is correct.  Then
+        IFFT(H) = f, ring by ring (batched over the rings of equal length).
         """
-        lmax = self.lmax
-        B    = ft_syn.shape[0]
-        dev  = ft_syn.device
-
-        # Undo phase correction: × exp(+i·m·φ_0^r)
-        ft_up = ft_syn * self._phase[None].conj()   # (B, R, lmax+1)
-
-        rings: List[torch.Tensor] = []
-        for r in range(self.n_rings):
-            Nr = int(self._ring_n[r])
-
-            # Build the full Nr-point Hermitian DFT spectrum H, then IFFT.
-            #
-            # The correct synthesis for a REAL map is:
-            #
-            #   f_j = G_0 + 2·Re[ Σ_{m=1}^{lmax} G_m · exp(i·2π·m·j/Nr) ]
-            #
-            # where G_m = ft_up[r, m].  The factor 2 comes from the reality
-            # condition: a_{l,-m} = (-1)^m · ā_lm.  Negative-m harmonics
-            # contribute a conjugate copy at frequency (Nr-m) % Nr.
-            #
-            # We therefore build a full Hermitian spectrum H of length Nr:
-            #
-            #   H[0]             += Nr · G_0          (DC, no conjugate)
-            #   H[m % Nr]        += Nr · G_m          (positive freq)
-            #   H[(Nr - m) % Nr] += Nr · G_m*         (negative freq = conjugate)
-            #
-            # then IFFT(H)[j] = f_j exactly.
-            #
-            # When Nr < lmax+1, multiple m values alias to the same bin —
-            # both their positive and conjugate contributions are accumulated
-            # independently, which is correct.
-            H = torch.zeros(B, Nr, dtype=self.cdtype, device=dev)
-            H[:, 0] = H[:, 0] + Nr * ft_up[:, r, 0]          # DC
-            for m in range(1, lmax + 1):
-                k_pos = m % Nr
-                k_neg = (Nr - m) % Nr
-                H[:, k_pos] = H[:, k_pos] + Nr * ft_up[:, r, m]
-                H[:, k_neg] = H[:, k_neg] + Nr * ft_up[:, r, m].conj()
-
-            rings.append(torch.fft.ifft(H, dim=-1).real)   # (B, Nr)
-
-        return torch.cat(rings, dim=1)   # (B, N)
+        B = ft_syn.shape[0]
+        pos, neg, nr = self._synthesis_index()
+        ft_up = ft_syn * self._phase[None].conj() * nr[None, :, None].to(ft_syn.real.dtype)  # Nr·G
+        H = torch.zeros(B, self.n_pix, dtype=self.cdtype, device=ft_syn.device)
+        H = H.index_add(1, pos, ft_up.reshape(B, -1))
+        H = H.index_add(1, neg, ft_up[:, :, 1:].conj().reshape(B, -1))
+        out = torch.zeros(B, self.n_pix, dtype=self.dtype, device=ft_syn.device)
+        for _, pix in self._ring_groups():
+            out = out.index_copy(1, pix.reshape(-1), torch.fft.ifft(H[:, pix], dim=-1).real.reshape(B, -1))
+        return out
 
     # ------------------------------------------------------------------
     # alm flat-index helper

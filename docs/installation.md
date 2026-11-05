@@ -25,7 +25,7 @@ pytest
 
 The package requires Python 3.10 or later, numpy, scipy, torch, healpy and matplotlib. It provides two commands, `stlia-train-denoise` and `stlia-train-patches`. The same programs are `python train_denoise.py` and `python train_patches.py` from the repository root.
 
-The spin-2 (E/B) transforms of {class}`stlia.sht.HEALPixSHT` need the optional packages `quaternionic` and `spherical` (`pip install "healpix-stl-ia[spin]"`). The spin-0 spectra used by the losses do not.
+The spin-2 (E/B) transforms of {class}`stlia.sht.HEALPixSHT` build their tables with a Wigner-d recurrence in numpy, without further packages. The optional packages `quaternionic` and `spherical` (`pip install "healpix-stl-ia[spin]"`) give the same tables, much more slowly (`stlia.sht._SPIN_TABLES = "spherical"`).
 
 ## The STL-Dev-MPI engine
 
