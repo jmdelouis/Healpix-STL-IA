@@ -50,6 +50,10 @@ runs)
     gpu l256_cl --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --realizations 4         --optimizer lbfgs --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     # one network for (Q, U), with the EE/BB spectrum loss (STL-Dev-MPI >= 92f2aef, built in $R/stl_sp2)
     STL=stl_sp2 gpu r256_joint_eebb --nside 256 --real --joint --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-spin 2         --cl-backend stl --cl-masks 0,30,45 --cond log857 $common
+    # the native U-Net of STL-Dev-MPI (Rust, branch claude/native-unet b580210, built in $R/stl_nu), as r256_fz
+    if [ -n "$GPU_OPTS" ]; then
+        STL=stl_nu sbatch $GPU_OPTS -J r256_native -o $RUNS/slurm.%j.log scripts/train_native.slurm r256_native             --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --bias-every 50 --bias-realizations 40             --loss data=1,l1=1,l2=1,l3=1 --sims 10-49 --cond none --eval-every 500 --engine-cache-bytes 0
+    fi
     # masked statistics (STL-Dev-MPI >= 9038114, built in $R/stl_mk: STL=stl_mk)
     STL=stl_mk gpu r256_fz_cl857_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45         --stat-masks 0,20,30,45 --cond log857 --bias frozen --bias-realizations 40 --bias-every 50 $common
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
@@ -59,7 +63,7 @@ figures)
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256
     $PY scripts/make_figures_real.py $RUNS/r256_dl123 $R/data/maps $RUNS/figs_real
     $PY scripts/make_figures_real.py $RUNS/l256_dl123 $R/data/maps $RUNS/figs_lbfgs
-    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_fz_cl857_mk l256_fz_mk; do
+    for r in l256_fz r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk; do
         $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
     ls $RUNS/figs64 $RUNS/figs256 $RUNS/figs_real

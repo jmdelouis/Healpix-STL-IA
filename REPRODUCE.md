@@ -152,7 +152,7 @@ tail -3 $R/runs/smoke/log
 bash scripts/reproduce.sh runs
 ```
 
-This submits the 19 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
+This submits the 20 runs listed in the script, which are independent of one another. Without Slurm, they run one after the other. Each run writes to `$R/runs/<name>/`:
 
 - `log`;
 - `train.json`, which holds the arguments, the loss history and the evaluations;
@@ -173,6 +173,7 @@ This submits the 19 runs listed in the script, which are independent of one anot
 | `l256_fz_cl` | L-BFGS reference, frozen biases and spectrum loss | GPU | not yet measured |
 | `r256_cl857` | network, live biases, spectrum loss `cl` and 857 GHz conditioning | GPU | not yet measured |
 | `l256_cl` | L-BFGS reference, live biases and spectrum loss | GPU | not yet measured |
+| `r256_native` | as `r256_fz`, with the native U-Net of STL-Dev-MPI (Rust, `NativeUNet`, b580210 built in `$R/stl_nu`; `scripts/train_native.slurm`) | GPU | not yet measured |
 | `r256_joint_eebb` | one network for (Q, U) (`--joint`), live biases, EE/BB spectrum loss (`--cl-spin 2`, STL-Dev-MPI 92f2aef built in `$R/stl_sp2`) and 857 GHz conditioning | GPU | not yet measured |
 | `r256_fz_cl857_mk` | as `r256_fz_cl857`, with the scattering statistics also under the masks 0, 20, 30, 45° (`--stat-masks`, STL-Dev-MPI 9038114 built in `$R/stl_mk`) | GPU | not yet measured |
 | `l256_fz_mk` | L-BFGS reference, frozen biases, masked statistics | GPU | not yet measured |
@@ -196,7 +197,7 @@ The reference values are those of Tables 1 and 2 of the paper. For `n256_data`, 
 
 ### Native U-Net (STL-Dev-MPI, Rust)
 
-The U-Net of `stlia` also exists in Rust in STL-Dev-MPI (`NativeUNet`, branch `claude/native-unet`), trained with everything on one GPU. Build that branch in `$R/stl_nu` (`STL=stl_nu`, as above), then time one frozen-bias step against the torch pipeline at nside 64 and 256:
+The U-Net of `stlia` also exists in Rust in STL-Dev-MPI (`NativeUNet`, branch `claude/native-unet`), trained with everything on one GPU. Build that branch (commit `b580210`) in `$R/stl_nu` (`STL=stl_nu`, as above). The run `r256_native` trains it as `r256_fz` (`scripts/train_native.slurm`, driver `train_native_unet.py` of STL-Dev-MPI). To time one frozen-bias step against the torch pipeline at nside 64 and 256:
 
 ```bash
 STL=stl_nu sbatch $GPU_OPTS -o $RUNS/slurm.%j.log scripts/bench_native.slurm   # -> $RUNS/bench_native/*.json
