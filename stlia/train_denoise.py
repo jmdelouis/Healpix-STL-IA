@@ -70,12 +70,12 @@ import time
 import numpy as np
 import torch
 
-from stlia.spectra import BinnedSpectra, SpectrumLoss
+from stlia.spectra import BinnedSpectra, NoiseSpectrumLoss, SpectrumLoss
 from stlia.stl_torch import DenoiseLoss, Stats, as_real
 from stlia.unet import UNet
 
 
-TERMS = ("data", "res", "cross", "l1", "l2", "l3", "cl")
+TERMS = ("data", "res", "cross", "l1", "l2", "l3", "cl", "tcl", "rcl")
 DELOUIS = ("l1", "l2", "l3")
 
 
@@ -359,7 +359,10 @@ def parser():
                    help="denoise the PR3 maps themselves: d and (d1, d2) are the data, both fields are trained")
     p.add_argument("--loss", default="data=1,res=1,cross=1",
                    help="weights of the terms data, res, cross, of the Delouis et al. (2022) terms l1, l2, l3, "
-                        "and of the binned half-mission cross spectrum cl")
+                        "of the binned half-mission cross spectrum cl, of the cross spectrum tcl of the 857 GHz map "
+                        "with u against that with d, and of the spectrum rcl of d - u against that of the noise "
+                        "(tcl and rcl: spectra of the fields of the statistics, Q and U or, with --pol-stats eb, "
+                        "E and B; the --cl-* options apply)")
     p.add_argument("--stat-masks", default=None,
                    help="scattering statistics averaged under galactic masks: latitude cuts b0 in degrees, "
                         "comma-separated, each mask keeping abs(b) > b0 (0: full sky); every coefficient then "
@@ -451,7 +454,8 @@ def main(argv=None):
 
     train_sky, test_sky = load(a.train_field), load(a.test_field)
     a.halfmission = any(weights[t] for t in DELOUIS + ("cl",))
-    if weights["cl"]:
+    spec_terms = weights["cl"] or weights["tcl"] or weights["rcl"]
+    if spec_terms:
         if a.cl_backend == "auto":
             import stl_port.native
             a.cl_backend = "stl" if hasattr(stl_port.native, "SpectrumEngine") else "torch"
@@ -471,6 +475,7 @@ def main(argv=None):
                 cl_cache[key] = SpectrumLoss(spectra, d1, d2)
             return cl_cache[key]
     scalar_cl = weights["cl"] and a.cl_spin == 0  # per field; spin 2: one term for (Q, U)
+    assert not (weights["tcl"] or weights["rcl"]) or (a.cl_spin == 0 and a.pol_stats != "chi"),         "tcl and rcl: spectra of scalar maps (--cl-spin 0, --pol-stats qu or eb)"
     assert not a.joint or (a.real and a.optimizer == "adam"), "--joint: --real and the adam optimizer"
     assert a.pol_stats != "eb" or (a.joint and a.cl_spin == 0), \
         "--pol-stats eb: --joint, and cl on the E and B maps (--cl-spin 0)"
@@ -478,7 +483,7 @@ def main(argv=None):
                                     and (not weights["cl"] or a.cl_spin == 2)), \
         "--pol-stats chi: --joint, the terms data, l1, l2, l3, and cl with --cl-spin 2"
     assert a.bias_warmup == 0 or a.bias == "frozen", "--bias-warmup: --bias frozen"
-    if a.halfmission:
+    if a.halfmission or weights["tcl"]:
         T = torch.as_tensor(np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy")), device=dev)
     a.noise_rel_std = a.noise_rel * float(train_sky.std())
     noise = {f: Noise(a, f, s, load, dev) for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
@@ -517,6 +522,30 @@ def main(argv=None):
     # Ergodic variances of the noise, for the `res` term (one training draw per field).
     noise_var = {f: forward1(n.draw(1)[0])[1] for f, n in noise.items()}
 
+    spec_cache, rcl_cache = {}, {}
+
+    def spectrum_terms(u, d, field, hm=None):
+        """The terms tcl and rcl of `u` (with gradient) and `d`: spectra of u
+        alone, without noise draws or biases (live and frozen alike)."""
+        out = {}
+        if weights["tcl"]:
+            # the noise is independent of T: <C(T, d)> = C(T, s)
+            key = ("tcl", field, d.data_ptr())
+            if key not in spec_cache:
+                if len(spec_cache) > 8:
+                    spec_cache.clear()
+                spec_cache[key] = SpectrumLoss(spectra, T, d)
+            out["tcl"] = spec_cache[key](spectra(T, u))
+        if weights["rcl"]:
+            if field not in rcl_cache:
+                # real data: the half-mission difference, the noise of the data themselves;
+                # otherwise the mean over the noise model
+                pool = noise[field]
+                sims = (0.5 * (hm[0] - hm[1]))[None] if a.real and hm is not None else                     pool.train[0] if pool.mode == "pr3sims" else pool.draw(40)
+                rcl_cache[field] = NoiseSpectrumLoss(spectra, sims)
+            out["rcl"] = rcl_cache[field](spectra(d - u))
+        return out
+
     def delouis(u, d, d1, d2, field, generator=None, test=False):
         """The three terms of Delouis et al. (2022) for `u` (with gradient) and
         the observation (d, d1, d2), on the full sky."""
@@ -541,6 +570,7 @@ def main(argv=None):
         if hm is not None and scalar_cl:
             # the half-mission noises are independent: <C(u + n1, u + n2)> = C(u, u), no bias to model
             out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u, u))
+        out.update(spectrum_terms(u, d, field, hm))
         if weights["data"] == weights["res"] == weights["cross"] == 0:
             return out
         target, tvar = forward1(d)
@@ -576,6 +606,23 @@ def main(argv=None):
         n = len(a_)
         st = CrossStats.apply(padded(a_, 3 + 3 * B), padded(b_, 3 + 3 * B), xrun)
         return st[:n], xrun["var"][:n]
+
+    res_target = {}
+
+    def noise_stats(field, hm=None):
+        """Target of the term res with frozen biases, computed once: on real data the
+        statistics of the half-mission difference, the noise of the data themselves;
+        otherwise the mean over `--bias-realizations` training noise draws of `field`."""
+        if field not in res_target:
+            with torch.no_grad():
+                if a.real and hm is not None:
+                    res_target[field] = auto_stats((0.5 * (hm[0] - hm[1]))[None])[0]
+                else:
+                    M, acc = a.bias_realizations, 0
+                    for k0 in range(0, M, nb):
+                        acc = acc + auto_stats(noise[field].draw(min(nb, M - k0))).sum(0)
+                    res_target[field] = acc / M
+        return res_target[field]
 
     def estimate_bias(u, field, generator=None):
         """Noise biases of the terms of `--loss` at the fixed map `u` (no gradient),
@@ -614,11 +661,19 @@ def main(argv=None):
         """Terms of `--loss` with frozen biases: Phi(u) + B against the targets of
         `losses` (same weights), without noise draws."""
         out = {}
+        if weights["data"] or weights["res"]:
+            # one forward for u and d - u: the engine keeps the state of its last forward only
+            ntarget = noise_stats(field, hm) if weights["res"] else None
+            st = auto_stats(torch.stack([u, d - u]))
         if weights["data"]:
             target, tvar = forward1(d)
-            out["data"] = loss_fn((auto_stats(u[None])[0] + bias["data"])[None], target, tvar)
+            out["data"] = loss_fn((st[0] + bias["data"])[None], target, tvar)
+        if weights["res"]:
+            # Phi(d - u) against the mean statistics of the noise: no noise draw on the model side
+            out["res"] = loss_fn(st[1:2], ntarget, noise_var[field])
         if scalar_cl:
             out["cl"] = cl_loss(field, hm[0], hm[1])(spectra(u, u))  # cross spectrum: unbiased, no bias
+        out.update(spectrum_terms(u, d, field, hm))
         if any(weights[t] for t in DELOUIS):
             d1, d2 = hm
             st, var = cross_stats(torch.stack([d1, d, T, u, T]), torch.stack([d2, u, d, u, u]))

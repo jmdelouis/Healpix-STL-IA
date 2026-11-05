@@ -118,6 +118,19 @@ The spectra come from one of two differentiable `anafast` (`--cl-backend`), whic
 
 On a T4 at $\nside=256$, the spectra and gradient of 4 pairs of maps under 3 masks take 1.0 s with the engine, against 16 s with `torch`. By default, they are the spectra of the scalar maps, Q and U separately, as the network treats them. With a joint (Q, U) network (`--joint`, below), `--cl-spin 2` uses the EE and BB cross spectra instead, from the spin-2 transforms of the engine (STL-Dev-MPI 92f2aef or later).
 
+### Cross spectrum with the dust template, and spectrum of the removed part
+
+Two further terms use the same spectra, masks and bins. Both are spectra of $u$ alone, with no noise draw and no bias, live or frozen.
+
+- **`tcl`**: the cross spectrum of the 857 GHz map $T$ with $u$, against that with $d$,
+  $C_b(m\,T, m\,d)$ vs $C_b(m\,T, m\,u)$.
+  The 353 GHz noise is independent of $T$, so $\langle C_b(T, d)\rangle = C_b(T, s)$: the target has no noise bias. It is weighted by its Gaussian variance, $(C_b^{TT}C_b^{dd} + (C_b^{Td})^2)/\nu_b$. On Q and U it is the TQ and TU cross spectrum. With `--pol-stats eb`, the fields are the E and B maps, and it is TE and TB.
+- **`rcl`**: the spectrum of the removed part against that of the noise,
+  $C_b(m\,(d-u))$ vs $\langle C_b(m\,n)\rangle$,
+  which a perfect denoising satisfies at every scale. On real data, the noise spectrum is that of the half-mission difference $(d_1-d_2)/2$, the noise of the data themselves, rather than that of the FFP10 simulations, whose level differs by about 15 % at low $\ell$. On mock data, it is the mean over the noise model. Each bin is weighted by the Gaussian variance of one realisation, $2C_b^2/\nu_b$.
+
+`rcl` is the spectral version of the scattering term `res`, $\Phi(d-u)$ against $\langle\Phi(n)\rangle$. With frozen biases, `res` also takes the statistics of the half-mission difference as its target on real data. These two terms can replace `l2`, $\Phi(d,u)$ against $\langle\Phi(u+\tilde n,u)\rangle$, whose model is biased on $S_1$, $S_4$ and one order of $S_3$, and needs noise draws or frozen biases. The targets of `res` and `rcl` need neither. `tcl` and `rcl` need scalar spectra: `--cl-spin 0`, and `--pol-stats qu` or `eb`.
+
 ## A joint (Q, U) network
 
 With `--joint` (`--real` only), one network ({class}`~stlia.unet.UNet` with `maps=2`) takes the pair $(Q, U)$ and returns $(u_Q, u_U)$, with one input scale for both. Every step trains both fields: the scattering terms of each are summed, and the EE/BB spectrum term constrains the pair. Each field differentiates its terms in turn, because the engines keep the state of their last forward only. The gradients add up on the output, and go back through the network once.

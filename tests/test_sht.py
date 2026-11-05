@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from stlia.sht import HEALPixSHT
-from stlia.spectra import BinnedSpectra, SpectrumLoss, galactic_mask
+from stlia.spectra import BinnedSpectra, NoiseSpectrumLoss, SpectrumLoss, galactic_mask
 
 NSIDE = 16
 
@@ -59,6 +59,15 @@ def test_spectrum_loss_zero_at_target():
     loss = SpectrumLoss(spec, d, d)
     assert float(loss(spec(d, d))) < 1e-20
     assert float(loss(spec(1.2 * d, 1.2 * d))) > 0
+
+
+def test_noise_spectrum_loss():
+    # rcl: a residual drawn like the noise scores about 1, a residual of zero far more
+    spec = BinnedSpectra(NSIDE, masks=(0.0, 20.0), lmin=2, width=4, apod=10.0)
+    noise = torch.as_tensor(np.random.default_rng(6).normal(size=(41, 12 * NSIDE * NSIDE)))
+    loss = NoiseSpectrumLoss(spec, noise[:40])
+    assert 0.2 < float(loss(spec(noise[40]))) < 5
+    assert float(loss(spec(0.0 * noise[40]))) > 20
 
 
 def test_engine_spectra_match_torch():

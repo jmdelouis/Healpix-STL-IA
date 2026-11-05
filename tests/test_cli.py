@@ -53,3 +53,9 @@ def test_train_denoise_eb_sigma_warmup_options():
 def test_train_denoise_chi_option():
     a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--joint", "--pol-stats", "chi"])
     assert a.pol_stats == "chi"
+
+
+def test_train_denoise_spectrum_terms():
+    assert {"tcl", "rcl"} <= set(train_denoise.TERMS)
+    a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--loss", "data=1,cl=1,tcl=1,rcl=1"])
+    assert a.loss == "data=1,cl=1,tcl=1,rcl=1"

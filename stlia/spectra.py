@@ -7,12 +7,17 @@ its model the spectrum of ``u``:
     cl    C_b(m d1, m d2)  vs  C_b(m u, m u)
 
 since the two half-mission noises are independent, ``< C_b(u + n1, u + n2) >``
-equals ``C_b(u, u)``: the model needs no noise draw and no noise bias.
-
+equals ``C_b(u, u)``: the model needs no noise draw and no noise bias,
 for every galactic mask ``m`` (``|b|`` above a cut, apodised).  The spectra are
 pseudo-spectra of the masked maps divided by the mean of the squared mask,
 binned in multipole, and compared with a Gaussian estimate of the variance
 of each bin of the target.
+
+Two further terms use the same spectra.  ``tcl`` compares the cross spectrum
+of a noise-free template ``T`` (the 857 GHz map) with ``u`` to that with
+``d``: the noise is independent of ``T``, so ``< C_b(T, d) > = C_b(T, s)``.
+``rcl`` asks the removed part ``d - u`` to have the spectrum of the noise
+(:class:`NoiseSpectrumLoss`).
 
 With ``spin=0`` the spectra are those of scalar maps (Q and U separately, as
 the network treats them by default).  With ``spin=2`` the maps are (Q, U)
@@ -193,3 +198,21 @@ class SpectrumLoss:
         if model.dim() > self.target.dim():
             model = model.mean(0)
         return ((model - self.target) ** 2 / self.var).mean()
+
+
+class NoiseSpectrumLoss(SpectrumLoss):
+    """Reduced chi^2 between the binned spectrum of the removed part `d - u`
+    and the mean spectrum of noise maps `[k, npix]` (simulations, or the
+    half-mission difference of the data): the term ``rcl``,
+
+        rcl   < C_b(m n, m n) >  vs  C_b(m (d - u), m (d - u))
+
+    which a perfect denoising satisfies at every scale.  The variance is the
+    Gaussian one of a single realisation, 2 C_b^2 / modes."""
+
+    def __init__(self, spectra, noises, chunk=8):
+        self.spectra = spectra
+        with torch.no_grad():
+            cl = torch.cat([spectra(noises[i:i + chunk]) for i in range(0, len(noises), chunk)])
+            self.target = cl.mean(0)
+            self.var = spectra.variance(self.target, self.target, self.target).clamp_min(1e-300)
