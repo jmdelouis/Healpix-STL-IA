@@ -67,6 +67,12 @@ runs)
     STL=stl_sp2 gpu r256_eb --nside 256 --real --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45,60         --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500 --bias-realizations 40 --bias-every 50 $common
     # the same with the local spin-2 statistics chi = conj-eth^2 (Q + iU) of the engine (claude/spin-eth f4cf030)
     STL=stl_spin gpu r256_chi --nside 256 --real --joint --pol-stats chi --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-spin 2         --cl-backend stl --cl-masks 0,30,45,60 --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500         --bias-realizations 40 --bias-every 50 $common
+    # 1000 steps: the best configuration, then L2 replaced by Phi(d - u) = Phi(n) (res) with the spectra
+    # of the 857 GHz map against u (tcl) and of d - u against the noise of d (rcl)
+    short="--steps 1000 --lr 1e-3 --seed 0 --realizations 4 --train-field Q --test-field U --log-every 50 --eval-every 250"
+    best="--nside 256 --real --cl-masks 0,30,45,60 --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen         --bias-warmup 200 --bias-realizations 40 --bias-every 50"
+    STL=stl_sp2 gpu r1k_ref $best --loss data=1,l1=1,l2=1,l3=1,cl=1 $short
+    STL=stl_sp2 gpu r1k_res $best --loss data=1,l1=1,l3=1,res=1,cl=1,tcl=1,rcl=1 $short
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
@@ -74,7 +80,7 @@ figures)
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256
     $PY scripts/make_figures_real.py $RUNS/r256_dl123 $R/data/maps $RUNS/figs_real
     $PY scripts/make_figures_real.py $RUNS/l256_dl123 $R/data/maps $RUNS/figs_lbfgs
-    for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi; do
+    for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi r1k_ref r1k_res; do
         $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
     ls $RUNS/figs64 $RUNS/figs256 $RUNS/figs_real

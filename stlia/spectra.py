@@ -208,7 +208,13 @@ class NoiseSpectrumLoss(SpectrumLoss):
         rcl   < C_b(m n, m n) >  vs  C_b(m (d - u), m (d - u))
 
     which a perfect denoising satisfies at every scale.  The variance is the
-    Gaussian one of a single realisation, 2 C_b^2 / modes."""
+    Gaussian one of a single realisation, 2 C_b^2 / modes.
+
+    On real data, :meth:`from_halves` takes as target the noise of `d` itself,
+    ``C_b(d, d) - C_b(d1, d2)``: the signal and the signal-noise terms cancel
+    in the difference, and with the target of ``cl`` the two terms then add
+    up to ``C_b(d, d)``, so that together they ask ``u`` and ``d - u`` to be
+    uncorrelated."""
 
     def __init__(self, spectra, noises, chunk=8):
         self.spectra = spectra
@@ -216,3 +222,15 @@ class NoiseSpectrumLoss(SpectrumLoss):
             cl = torch.cat([spectra(noises[i:i + chunk]) for i in range(0, len(noises), chunk)])
             self.target = cl.mean(0)
             self.var = spectra.variance(self.target, self.target, self.target).clamp_min(1e-300)
+
+    @classmethod
+    def from_halves(cls, spectra, d, d1, d2):
+        """Target ``C_b(d, d) - C_b(d1, d2)``, variance that of one realisation of
+        the half-mission difference ``(d1 - d2) / 2``."""
+        self = cls.__new__(cls)
+        self.spectra = spectra
+        with torch.no_grad():
+            self.target = spectra(d) - spectra(d1, d2)
+            h = spectra(0.5 * (d1 - d2))
+            self.var = spectra.variance(h, h, h).clamp_min(1e-300)
+        return self

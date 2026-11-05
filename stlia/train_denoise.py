@@ -370,6 +370,10 @@ def parser():
     p.add_argument("--cl-masks", default="0,30,45",
                    help="cl: galactic latitude cuts b0 in degrees, comma-separated: the masks keep abs(b) > b0 (0: full sky)")
     p.add_argument("--cl-lmin", type=int, default=10, help="cl: first multipole")
+    p.add_argument("--rcl-masks", default="30,45,60",
+                   help="rcl: galactic latitude cuts of its masks; on real data its target C(d, d) - C(d1, d2) is "
+                        "dominated in the Galactic plane by the difference between d and the mean of d1 and d2")
+    p.add_argument("--rcl-lmin", type=int, default=40, help="rcl: first multipole")
     p.add_argument("--cl-lmax", type=int, default=None, help="cl: last multipole (default 2 nside - 1)")
     p.add_argument("--cl-width", type=int, default=30, help="cl: width of the multipole bins")
     p.add_argument("--cl-apod", type=float, default=5.0, help="cl: FWHM of the mask apodisation (degrees)")
@@ -465,6 +469,9 @@ def main(argv=None):
                                 lmax=a.cl_lmax, width=a.cl_width, apod=a.cl_apod, device=f"cuda:{a.device}",
                                 backend=a.cl_backend, spin=a.cl_spin)
         cl_cache = {}
+        rspectra = BinnedSpectra(a.nside, masks=[float(b) for b in a.rcl_masks.split(",")], lmin=a.rcl_lmin,
+                                 lmax=a.cl_lmax, width=a.cl_width, apod=a.cl_apod, device=f"cuda:{a.device}",
+                                 backend=a.cl_backend) if weights["rcl"] else None
 
         def cl_loss(field, d1, d2):
             """Spectrum loss of the half-mission pair (d1, d2) (cached for fixed observations)."""
@@ -538,12 +545,15 @@ def main(argv=None):
             out["tcl"] = spec_cache[key](spectra(T, u))
         if weights["rcl"]:
             if field not in rcl_cache:
-                # real data: the half-mission difference, the noise of the data themselves;
-                # otherwise the mean over the noise model
-                pool = noise[field]
-                sims = (0.5 * (hm[0] - hm[1]))[None] if a.real and hm is not None else                     pool.train[0] if pool.mode == "pr3sims" else pool.draw(40)
-                rcl_cache[field] = NoiseSpectrumLoss(spectra, sims)
-            out["rcl"] = rcl_cache[field](spectra(d - u))
+                # real data: the noise of d itself, C(d, d) - C(d1, d2); otherwise the mean over
+                # the noise model
+                if a.real and hm is not None:
+                    rcl_cache[field] = NoiseSpectrumLoss.from_halves(rspectra, d, hm[0], hm[1])
+                else:
+                    pool = noise[field]
+                    sims = pool.train[0] if pool.mode == "pr3sims" else pool.draw(40)
+                    rcl_cache[field] = NoiseSpectrumLoss(rspectra, sims)
+            out["rcl"] = rcl_cache[field](rspectra(d - u))
         return out
 
     def delouis(u, d, d1, d2, field, generator=None, test=False):

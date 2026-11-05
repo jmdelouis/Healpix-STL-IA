@@ -121,3 +121,15 @@ def test_eb_maps_match_healpy():
         np.testing.assert_allclose(out[k].detach().numpy(), ref, atol=1e-8 * np.abs(ref).max())
     out.square().sum().backward()  # differentiable with respect to (Q, U)
     assert torch.isfinite(qu.grad).all() and qu.grad.abs().sum() > 0
+
+
+def test_noise_spectrum_from_halves():
+    # C(d) - C(d1, d2) is the spectrum of the noise of d: d - u = n scores about 1
+    spec = BinnedSpectra(NSIDE, masks=(0.0,), lmin=2, width=4, apod=0.0)
+    rng = np.random.default_rng(7)
+    s = torch.as_tensor(nest_map(8))
+    n1, n2 = (torch.as_tensor(0.3 * rng.normal(size=s.numel())) for _ in range(2))
+    d = s + 0.5 * (n1 + n2)
+    loss = NoiseSpectrumLoss.from_halves(spec, d, s + n1, s + n2)
+    assert float(loss(spec(d - s))) < 3
+    assert float(loss(spec(0.0 * d))) > 20
