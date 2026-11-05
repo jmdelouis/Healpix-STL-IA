@@ -142,7 +142,11 @@ Against the same engine applied to the exact $\chi$ (spin-2 SHT), the statistics
 - 0.4–3 % on $S_1$ and $S_2$ for $j\ge1$ (nside 64, also on the Planck 353 maps);
 - 6–14 % on $S_3$ and $S_4$ with $j_1>0$.
 
-The finest scale $j=0$ is off by 30–50 % at the pixel scale, where the SHT reference itself is off by 12 %. The stencil is local, so masks with holes work: with masks eroded by the stencil radius, a 15° hole changes the masked $S_1$ and $S_2$ by less than 0.03 %. The cross statistics in spin 2, needed by `l1`, `l2` and `l3`, are not in the engine yet: `chi` takes the data term, plus `cl` on EE and BB (`--cl-spin 2`).
+The finest scale $j=0$ is off by 30–50 % at the pixel scale, where the SHT reference itself is off by 12 %. The stencil is local, so masks with holes work: with masks eroded by the stencil radius, a 15° hole changes the masked $S_1$ and $S_2$ by less than 0.03 %. The cross statistics are also on $\chi$ (STL-Dev-MPI f4cf030), each for E and for B, without E×B terms:
+- `l1` takes $S(\chi(u+\tilde n_1), \chi(u+\tilde n_2))$ and `l2` takes $S(\chi(u+\tilde n), \chi(u))$, both pairs of spin-2 fields;
+- `l3` takes $S(T, \chi(u+\tilde n))$, with the 857 GHz map $T$ scalar.
+
+Against the scalar cross engine on the exact $\chi$, at nside 64, they agree to 0.5–2 % on $S_1$ and $S_2$ for $j=1$–3, and to 3–4 % on $S_3$ and $S_4$ for $j_1>0$. With masks, the erosion applies at every level; a coarse level that it would empty keeps the parents of the pixels kept at the level below. The spectrum term is on the EE and BB cross spectra (`--cl-spin 2`).
 
 ## Conditioning on the dust intensity
 

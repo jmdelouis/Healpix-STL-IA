@@ -197,31 +197,58 @@ class Noise:
 
 
 class ChiTerms:
-    """The data term on the local chi_E + i chi_B = conj-eth^2 (Q + iU) of the
-    spin-2 engine of STL-Dev-MPI (``NativeEngine(spin=2)``, branch
+    """The terms of `--loss` on the local chi_E + i chi_B = conj-eth^2 (Q + iU) of
+    the spin-2 engine of STL-Dev-MPI (``NativeEngine(spin=2)``, branch
     claude/spin-eth: conj-eth^2 at the finest level, then the scalar pyramid of
-    the engine) for a joint (Q, U) output::
+    the engine) for a joint (Q, U) output `u`::
 
-        data   mean_i S(chi(u + n_i))  vs  S(chi(d))
+        data   mean_i S(chi(u + n_i))               vs  S(chi(d))
+        l1     mean_i S(chi(u + ñ1_i), chi(u + ñ2_i)) vs  S(chi(d1), chi(d2))
+        l2     mean_i S(chi(u + ñ_i), chi(u))         vs  S(chi(d), chi(u))
+        l3     mean_i S(T, chi(u + ñ_i))              vs  S(T, chi(d))
 
-    the Q and U noises of the same simulation drawn together.  The statistics of
-    E and B are flattened component-major, `[2 K ncoeff]`.  With frozen biases,
-    B = <S(chi(u0 + n))> - S(chi(u0)), zero where ``unbiased(plan, "data")``."""
+    each statistic for E and for B (no E x B terms), flattened component-major,
+    `[2 K ncoeff]`; T, the 857 GHz map, is scalar.  The Q and U noises of the
+    same simulation are drawn together.  With frozen biases the model is the
+    statistic of u alone plus a bias estimated at a fixed u, zero where
+    ``unbiased(plan, term)``, as for the scalar terms."""
 
-    def __init__(self, a, fields, fixed, noise, nb, B, mk, dev):
+    def __init__(self, a, weights, fields, fixed, noise, nb, B, mk, T, dev):
         from stl_port.native import NativeEngine
         j = a.j or int(math.log2(a.nside)) - 1
+        K = len(mk.get("masks", [None]))
+        self.w, self.B, self.nb, self.M, self.bias_all, self.dev, self.T = weights, B, nb, a.bias_realizations, \
+            a.bias_all, dev, T
         self.one = NativeEngine(a.nside, j, batch=1, backend="gpu", device=a.device, spin=2, **mk)
         self.many = NativeEngine(a.nside, j, batch=nb, backend="gpu", device=a.device, spin=2, **mk)
         self.stats = Stats(self.many)
-        K = len(mk.get("masks", [None]))
-        npix = np.tile(np.asarray(self.one.native_pixels(), dtype=np.float64).ravel(), 2) if mk else None
-        self.loss = DenoiseLoss(self.one.plan, a.nside, device=dev, masks=2 * K, npix=npix)
-        self.exact = torch.as_tensor(np.tile(unbiased(self.one.plan, "data"), 2 * K), device=dev)
-        self.pools = [noise[f].train[0] for f in fields]  # the same simulations, in the same order
-        self.B, self.nb, self.M, self.bias_all, self.dev = B, nb, a.bias_realizations, a.bias_all, dev
-        self.target, self.tvar = self.forward1(torch.stack([fixed[f][1] for f in fields]))
-        print(f"statistics of chi_E, chi_B (spin-2 engine): {2 * K * len(self.one.plan)} coefficients", flush=True)
+        self.loss = self._loss(self.one, a, mk, K)
+        self.exact = {"data": self._exact(self.one, "data", K)}
+        self.pools = [noise[f].train for f in fields]  # [noise, hm1, hm2] per field, the same simulations
+        qu = lambda i: torch.stack([fixed[f][i] for f in fields])
+        self.d = qu(1)
+        self.target, self.tvar = self.forward1(self.d)
+        self.cross = any(weights[t] for t in DELOUIS)
+        if self.cross:
+            self.d1, self.d2 = (torch.stack([fixed[f][2][h] for f in fields]) for h in (0, 1))
+            # pairs: spin x spin, [(d1, d2), (d, u), l1 x B, l2 x B]; scalar T x spin, [(T, d), l3 x B]
+            self.nqq, self.ntq = 2 + 2 * B, 1 + B
+            self.xqq = {"engine": NativeEngine(a.nside, j, batch=self.nqq, backend="gpu", device=a.device, spin=2,
+                                               cross=True, spin_a=2, **mk), "generation": 0}
+            self.xtq = {"engine": NativeEngine(a.nside, j, batch=self.ntq, backend="gpu", device=a.device, spin=2,
+                                               cross=True, spin_a=0, **mk), "generation": 0}
+            plan = self.xqq["engine"].plan
+            self.xloss = self._loss(self.xqq["engine"], a, mk, K)
+            self.exact.update({t: self._exact(self.xqq["engine"], t, K) for t in DELOUIS})
+        print(f"statistics of chi_E, chi_B (spin-2 engine): {2 * K * len(self.one.plan)} coefficients"
+              + (f", cross {2 * K * len(plan)}" if self.cross else ""), flush=True)
+
+    def _loss(self, eng, a, mk, K):
+        npix = np.tile(np.asarray(eng.native_pixels(), dtype=np.float64).ravel(), 2) if mk else None
+        return DenoiseLoss(eng.plan, a.nside, device=self.dev, masks=2 * K, npix=npix)
+
+    def _exact(self, eng, term, K):
+        return torch.as_tensor(np.tile(unbiased(eng.plan, term), 2 * K), device=self.dev)
 
     def forward1(self, qu):
         """Statistics and moments of one (Q, U) map `[2, npix]`, without gradient."""
@@ -230,37 +257,85 @@ class ChiTerms:
                 torch.as_tensor(var[0], device=self.dev).reshape(-1))
 
     def draw(self, k, generator=None):
-        """`[k, 2, npix]` (Q, U) noise of k training simulations, random signs."""
-        idx = torch.randint(len(self.pools[0]), (k,), generator=generator, device=self.dev)
-        sign = torch.randint(0, 2, (k, 1, 1), generator=generator, device=self.dev).to(self.pools[0].dtype) * 2 - 1
-        return torch.stack([p[idx] for p in self.pools], 1) * sign
+        """(n, n1, n2), each `[k, 2, npix]`: (Q, U) noises of k training simulations
+        (full and half missions of the same simulations), random signs."""
+        idx = torch.randint(len(self.pools[0][0]), (k,), generator=generator, device=self.dev)
+        sign = torch.randint(0, 2, (k, 1, 1), generator=generator, device=self.dev).to(self.d.dtype) * 2 - 1
+        return tuple(torch.stack([p[h][idx] for p in self.pools], 1) * sign for h in range(len(self.pools[0])))
 
     def auto(self, x):
         """Statistics with gradient of `x` `[k <= nb, 2, npix]` -> `[k, 2 K ncoeff, 2]`."""
-        n = len(x)
-        if n < self.nb:
-            x = torch.cat([x, x[:1].expand(self.nb - n, -1, -1)])
-        return self.stats(x)[:n]
+        return self.stats(_pad(x, self.nb))[:len(x)]
 
-    def terms(self, u2, bias=None):
-        """{"data": loss} for the joint output `u2` `[2, npix]`; live draws, or the frozen `bias`."""
+    def pairs(self, run, n, a_, b_):
+        """Cross statistics with gradient of `k <= n` pairs -> (`[k, 2 K ncoeff, 2]`, moments)."""
+        k = len(a_)
+        st = CrossStats.apply(_pad(a_, n), _pad(b_, n), run)
+        return st[:k], run["var"][:k]
+
+    def terms(self, u, bias=None):
+        """Terms of `--loss` for the joint output `u` `[2, npix]`: live draws, or the frozen `bias`."""
+        out = {}
+        T, B = self.T, self.B
+        if self.w["data"]:
+            st = self.auto(u[None] + self.draw(B)[0]) if bias is None else self.auto(u[None]) + bias["data"]
+            out["data"] = self.loss(st, self.target, self.tvar)
+        if not self.cross:
+            return out
         if bias is None:
-            st = self.auto(u2[None] + self.draw(self.B))
+            n, n1, n2 = self.draw(B)
+            st, var = self.pairs(self.xqq, self.nqq, torch.cat([self.d1[None], self.d[None], u + n1, u + n]),
+                                 torch.cat([self.d2[None], u[None], u + n2, u.expand(B, -1, -1)]))
+            sq, vq = self.pairs(self.xtq, self.ntq, T.expand(1 + B, -1), torch.cat([self.d[None], u + n]))
+            out["l1"] = self.xloss(st[2:2 + B], st[0].detach(), var[0])
+            out["l2"] = self.xloss(st[2 + B:2 + 2 * B], st[1], var[1])
+            out["l3"] = self.xloss(sq[1:], sq[0].detach(), vq[0])
         else:
-            st = self.auto(u2[None]) + bias
-        return {"data": self.loss(st, self.target, self.tvar)}
+            st, var = self.pairs(self.xqq, self.nqq, torch.stack([self.d1, self.d, u]), torch.stack([self.d2, u, u]))
+            sq, vq = self.pairs(self.xtq, self.ntq, T.expand(2, -1), torch.stack([self.d, u]))
+            out["l1"] = self.xloss((st[2] + bias["l1"])[None], st[0].detach(), var[0])
+            out["l2"] = self.xloss((st[2] + bias["l2"])[None], st[1], var[1])
+            out["l3"] = self.xloss((sq[1] + bias["l3"])[None], sq[0].detach(), vq[0])
+        return {t: v for t, v in out.items() if self.w[t]}
 
-    def estimate_bias(self, u2, generator=None):
-        """Noise bias of the data term at the fixed (Q, U) map `u2`, `--bias-realizations` draws."""
+    def estimate_bias(self, u, generator=None):
+        """Noise biases at the fixed (Q, U) map `u`, over `--bias-realizations` draws."""
+        M, T = self.M, self.T
+        bias = {}
         with torch.no_grad():
             acc = 0
-            for k0 in range(0, self.M, self.nb):
-                k = min(self.nb, self.M - k0)
-                acc = acc + self.auto(u2[None] + self.draw(k, generator)).sum(0)
-            bias = acc / self.M - self.auto(u2[None])[0]
+            for k0 in range(0, M, self.nb):
+                k = min(self.nb, M - k0)
+                acc = acc + self.auto(u[None] + self.draw(k, generator)[0]).sum(0)
+            bias["data"] = acc / M - self.auto(u[None])[0]
+            if self.cross:
+                uu = self.pairs(self.xqq, self.nqq, u[None], u[None])[0][0]
+                tu = self.pairs(self.xtq, self.ntq, T[None], u[None])[0][0]
+                acc = {t: 0 for t in DELOUIS}
+                per = self.nqq // 2
+                for k0 in range(0, M, per):
+                    k = min(per, M - k0)
+                    n, n1, n2 = self.draw(k, generator)
+                    st = self.pairs(self.xqq, self.nqq, torch.cat([u + n1, u + n]),
+                                    torch.cat([u + n2, u.expand(k, -1, -1)]))[0]
+                    acc["l1"] = acc["l1"] + st[:k].sum(0)
+                    acc["l2"] = acc["l2"] + st[k:].sum(0)
+                for k0 in range(0, M, self.ntq):
+                    k = min(self.ntq, M - k0)
+                    n = self.draw(k, generator)[0]
+                    acc["l3"] = acc["l3"] + self.pairs(self.xtq, self.ntq, T.expand(k, -1), u + n)[0].sum(0)
+                bias["l1"] = acc["l1"] / M - uu
+                bias["l2"] = acc["l2"] / M - uu
+                bias["l3"] = acc["l3"] / M - tu
             if not self.bias_all:
-                bias[self.exact] = 0
+                for t in bias:
+                    bias[t][self.exact[t]] = 0
         return bias
+
+
+def _pad(x, n):
+    """`x` `[k <= n, ...]` -> `[n, ...]`, completed with copies of x[0] (zero cotangents)."""
+    return torch.cat([x, x[:1].expand((n - len(x),) + x.shape[1:])]) if len(x) < n else x
 
 
 def parser():
@@ -305,7 +380,8 @@ def parser():
                         "(stlia.polar, exact spin-2 transforms of the full sky), which do not depend on the frame "
                         "of Q and U; with cl (spin 0), the spectra of the E and B maps; chi, the local "
                         "chi_E + i chi_B = conj-eth^2 (Q + iU) of the spin-2 engine of STL-Dev-MPI (NativeEngine "
-                        "spin=2, branch claude/spin-eth), with masks; data term only for now")
+                        "spin=2, branch claude/spin-eth f4cf030 or later), with masks; terms data, l1, l2, l3 (l3: scalar 857 GHz x "
+                        "chi), and cl with --cl-spin 2")
     p.add_argument("--cl-backend", default="auto", choices=["auto", "torch", "stl"],
                    help="cl: spectra by the SpectrumEngine of STL-Dev-MPI (stl), by the transforms of stlia.sht "
                         "(torch), or by the engine when the installed STL-Dev-MPI has it (auto)")
@@ -398,9 +474,9 @@ def main(argv=None):
     assert not a.joint or (a.real and a.optimizer == "adam"), "--joint: --real and the adam optimizer"
     assert a.pol_stats != "eb" or (a.joint and a.cl_spin == 0), \
         "--pol-stats eb: --joint, and cl on the E and B maps (--cl-spin 0)"
-    assert a.pol_stats != "chi" or (a.joint and not any(weights[t] for t in ("res", "cross") + DELOUIS)
+    assert a.pol_stats != "chi" or (a.joint and not any(weights[t] for t in ("res", "cross"))
                                     and (not weights["cl"] or a.cl_spin == 2)), \
-        "--pol-stats chi: --joint, the data term (no cross statistics in the spin engine yet), cl with --cl-spin 2"
+        "--pol-stats chi: --joint, the terms data, l1, l2, l3, and cl with --cl-spin 2"
     assert a.bias_warmup == 0 or a.bias == "frozen", "--bias-warmup: --bias frozen"
     if a.halfmission:
         T = torch.as_tensor(np.load(os.path.join(a.data, f"planck857_I_n{a.nside}.npy")), device=dev)
@@ -628,7 +704,9 @@ def main(argv=None):
             rms.clear()
             rms.update({f: n.rms for f, n in noise.items()})
             print(f"statistics of the E and B maps; noise rms E {rms['E']:.4g}, B {rms['B']:.4g} uK", flush=True)
-        chi = ChiTerms(a, fields, fixed, noise, nb, B, mk, dev) if a.pol_stats == "chi" else None
+        chi = None
+        if a.pol_stats == "chi":
+            chi = ChiTerms(a, weights, fields, fixed, noise, nb, B, mk, T if a.halfmission else None, dev)
 
         def joint_outputs():
             with torch.no_grad():

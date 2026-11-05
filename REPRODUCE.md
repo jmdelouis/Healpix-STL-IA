@@ -57,6 +57,7 @@ git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
 # masked statistics (runs *_mk): a second checkout at 9038114 in $R/stl_mk/src, built with STL=stl_mk
 # spectrum loss in the engine: a checkout at 5648ba1 (it also has the masked statistics), built with STL=stl_sp
 # EE/BB spectrum loss of the joint (Q, U) network: a checkout at 92f2aef, built with STL=stl_sp2
+# local spin-2 statistics (--pol-stats chi, run r256_chi): a checkout at f4cf030 (branch claude/spin-eth), STL=stl_spin
 ```
 
 `scripts/env.sh` sets the environment from a few variables:
@@ -178,6 +179,7 @@ This submits the 20 runs listed in the script, which are independent of one anot
 | `r256_fz_cl857_mk` | as `r256_fz_cl857`, with the scattering statistics also under the masks 0, 20, 30, 45° (`--stat-masks`, STL-Dev-MPI 9038114 built in `$R/stl_mk`) | GPU | 3 h 35 |
 | `r256_sig_wu` | as `r256_fz_cl857_mk`, with the noise level as a second conditioning map (`--cond log857+sigma`), 500 steps of live biases first (`--bias-warmup 500`) and the spectrum mask at 60° (`$R/stl_sp2`) | GPU | not yet measured |
 | `r256_eb` | as `r256_sig_wu`, one (Q, U) network with every term on the E and B maps (`--joint --pol-stats eb`, spin-2 transforms of `stlia.sht`; about 14 GB more GPU memory) | GPU | not yet measured |
+| `r256_chi` | as `r256_sig_wu`, one (Q, U) network with every scattering term on chi_E + i chi_B = conj-eth^2 (Q + iU) (`--joint --pol-stats chi`, spin-2 engine of STL-Dev-MPI f4cf030 built in `$R/stl_spin`) and the spectrum loss on EE and BB (`--cl-spin 2`) | GPU | not yet measured |
 | `l256_fz_mk` | L-BFGS reference, frozen biases, masked statistics | GPU | not yet measured |
 
 `p256_l123` can instead use the GPU disc engine, with the same options:
