@@ -75,6 +75,7 @@ runs)
     STL=stl_sp2 gpu r1k_res $best --loss data=1,l1=1,l3=1,res=1,cl=1,tcl=1,rcl=1 $short
     # the best configuration as one (Q, U) network with every term, the spectrum term included, on the E and B maps
     STL=stl_sp2 gpu r1k_eb $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 $short
+    STL=stl_sp2 gpu r1k_eb_s1 $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 ${short/--seed 0/--seed 1}
     # the same with u and d - u decorrelated (xcl)
     STL=stl_sp2 gpu r1k_ebx $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1,xcl=1 $short
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
