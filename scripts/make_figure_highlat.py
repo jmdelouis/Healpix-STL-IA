@@ -62,6 +62,9 @@ def main():
         row[0].set_ylabel(r"$C_\ell(u)\,/\,C_\ell(d_1\times d_2)$")
     for ax in axes[-1]:
         ax.set_xlabel(r"$\ell$")
+        ax.set_xticks([t for t in (10, 30, 100, 300) if a.lmin <= t <= a.lmax], minor=False)
+        ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     axes[0, 0].legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(a.out)
