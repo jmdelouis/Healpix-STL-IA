@@ -133,8 +133,8 @@ Two further terms use the same spectra, masks and bins. Both are spectra of $u$ 
 side=64$ the joint E/B network trained with `cl` removes only 0.37 times the noise rms, with $u$ following the cross spectrum to 1\%. The variance is fixed by the data, $|C_b(d_1,d_2)|\,C_b(h,h)/
 u_b$ with $h=(d_1-d_2)/2$, on the masks of `cl`. A variance taken at the current maps vanishes with $d-u$, and holds the network at $u=d$, which satisfies `xcl` exactly: only `cl` excludes it, and with a weight of 10 or more `xcl` keeps the network there. With a weight of 1 the network removes 0.51 times the noise rms, the spectrum of $d-u$ is 0.9 times that of the half-mission difference at $100\le\ell<128$ (against 0.5), and $u$ still follows the cross spectrum to 1\% over $|b|>30^\circ$ (`--real` only).
 
-`--input-noise` $lpha$ gives the network $d+lpha n$ at every training step, $n$ a training simulation of the noise (the same for $Q$ and $U$, random sign), while the terms compare $u$ with $d$: then $u=d$ no longer satisfies `xcl`. At $
-side=64$, with $lpha=0.5$, it did not remove more noise than `xcl` alone in 400 steps.
+`--input-noise` $\alpha$ gives the network $d+\alpha n$ at every training step, $n$ a training simulation of the noise (the same for $Q$ and $U$, random sign), while the terms compare $u$ with $d$: then $u=d$ no longer satisfies `xcl`. At $
+side=64$, with $\alpha=0.5$, it did not remove more noise than `xcl` alone in 400 steps.
 
 `rcl` is the spectral version of the scattering term `res`, $\Phi(d-u)$ against $\langle\Phi(n)\rangle$. With frozen biases, `res` also takes the statistics of the half-mission difference as its target on real data. These two terms can replace `l2`, $\Phi(d,u)$ against $\langle\Phi(u+\tilde n,u)\rangle$, whose model is biased on $S_1$, $S_4$ and one order of $S_3$, and needs noise draws or frozen biases. The targets of `res` and `rcl` need neither. `tcl`, `rcl` and `xcl` need scalar spectra: `--cl-spin 0`, and `--pol-stats qu` or `eb`.
 
