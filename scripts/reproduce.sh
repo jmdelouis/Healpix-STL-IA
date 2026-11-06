@@ -73,6 +73,10 @@ runs)
     best="--nside 256 --real --cl-masks 0,30,45,60 --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen         --bias-warmup 200 --bias-realizations 40 --bias-every 50"
     STL=stl_sp2 gpu r1k_ref $best --loss data=1,l1=1,l2=1,l3=1,cl=1 $short
     STL=stl_sp2 gpu r1k_res $best --loss data=1,l1=1,l3=1,res=1,cl=1,tcl=1,rcl=1 $short
+    # the best configuration as one (Q, U) network with every term, the spectrum term included, on the E and B maps
+    STL=stl_sp2 gpu r1k_eb $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 $short
+    # the same with u and d - u decorrelated (xcl)
+    STL=stl_sp2 gpu r1k_ebx $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1,xcl=1 $short
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
@@ -80,7 +84,7 @@ figures)
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256
     $PY scripts/make_figures_real.py $RUNS/r256_dl123 $R/data/maps $RUNS/figs_real
     $PY scripts/make_figures_real.py $RUNS/l256_dl123 $R/data/maps $RUNS/figs_lbfgs
-    for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi r1k_ref r1k_res; do
+    for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi r1k_ref r1k_res r1k_eb r1k_ebx; do
         $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
     $PY scripts/make_figure_highlat.py $R/data/maps $RUNS/highlat_spectra.pdf --lmax 449 --bins 10 \

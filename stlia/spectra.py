@@ -17,7 +17,9 @@ Two further terms use the same spectra.  ``tcl`` compares the cross spectrum
 of a noise-free template ``T`` (the 857 GHz map) with ``u`` to that with
 ``d``: the noise is independent of ``T``, so ``< C_b(T, d) > = C_b(T, s)``.
 ``rcl`` asks the removed part ``d - u`` to have the spectrum of the noise
-(:class:`NoiseSpectrumLoss`).
+(:class:`NoiseSpectrumLoss`).  ``xcl`` asks ``u`` and ``d - u`` to be uncorrelated
+(:class:`DecorrelationLoss`): with ``cl`` alone, ``u`` can have the spectrum
+of the sky while keeping part of the noise and losing as much signal.
 
 With ``spin=0`` the spectra are those of scalar maps (Q and U separately, as
 the network treats them by default).  With ``spin=2`` the maps are (Q, U)
@@ -234,3 +236,25 @@ class NoiseSpectrumLoss(SpectrumLoss):
             h = spectra(0.5 * (d1 - d2))
             self.var = spectra.variance(h, h, h).clamp_min(1e-300)
         return self
+
+
+class DecorrelationLoss:
+    """The term ``xcl``: reduced chi^2 of the binned cross spectrum of the
+    denoised map ``u`` and the removed part ``r = d - u`` against zero,
+
+        xcl   C_b(m u, m (d - u))  vs  0
+
+    which a perfect denoising satisfies, the noise being independent of the
+    sky, with no target to estimate.  The variance is fixed by the data,
+    that of the cross spectrum of the sky and the noise, |C_b(d1, d2)| C_b(h, h)
+    / modes with h = (d1 - d2) / 2: a variance taken at the current maps
+    would vanish with d - u and hold the network at u = d."""
+
+    def __init__(self, spectra, d1, d2):
+        self.spectra = spectra
+        with torch.no_grad():
+            h = spectra(0.5 * (d1 - d2))
+            self.var = spectra.variance(spectra(d1, d2).abs(), h, 0.0 * h).clamp_min(1e-300)
+
+    def __call__(self, u, r):
+        return (self.spectra(u, r) ** 2 / self.var).mean()

@@ -56,6 +56,6 @@ def test_train_denoise_chi_option():
 
 
 def test_train_denoise_spectrum_terms():
-    assert {"tcl", "rcl"} <= set(train_denoise.TERMS)
+    assert {"tcl", "rcl", "xcl"} <= set(train_denoise.TERMS)
     a = train_denoise.parser().parse_args(["--data", "D", "--out", "O", "--loss", "data=1,cl=1,tcl=1,rcl=1"])
     assert a.loss == "data=1,cl=1,tcl=1,rcl=1"

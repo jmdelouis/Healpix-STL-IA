@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from stlia.sht import HEALPixSHT
-from stlia.spectra import BinnedSpectra, NoiseSpectrumLoss, SpectrumLoss, galactic_mask
+from stlia.spectra import BinnedSpectra, DecorrelationLoss, NoiseSpectrumLoss, SpectrumLoss, galactic_mask
 
 NSIDE = 16
 
@@ -133,3 +133,18 @@ def test_noise_spectrum_from_halves():
     loss = NoiseSpectrumLoss.from_halves(spec, d, s + n1, s + n2)
     assert float(loss(spec(d - s))) < 3
     assert float(loss(spec(0.0 * d))) > 20
+
+
+def test_decorrelation_loss():
+    # xcl: the true split of d scores about 1, a u that keeps half of the noise more
+    # (few modes at this nside); u = d scores 0, which only cl excludes
+    spec = BinnedSpectra(NSIDE, masks=(0.0,), lmin=2, width=4, apod=0.0)
+    rng = np.random.default_rng(1)
+    s, n1, n2 = (torch.as_tensor(rng.normal(size=12 * NSIDE * NSIDE)) for _ in range(3))
+    n = 0.5 * (n1 + n2)
+    loss = DecorrelationLoss(spec, s + n1, s + n2)
+    assert float(loss(s, n)) < 2
+    assert float(loss(s + 0.5 * n, 0.5 * n)) > 3
+    u = s.clone().requires_grad_()
+    loss(u, s + n - u).backward()
+    assert torch.isfinite(u.grad).all() and u.grad.abs().sum() > 0

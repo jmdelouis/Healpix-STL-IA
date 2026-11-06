@@ -70,12 +70,12 @@ import time
 import numpy as np
 import torch
 
-from stlia.spectra import BinnedSpectra, NoiseSpectrumLoss, SpectrumLoss
+from stlia.spectra import BinnedSpectra, DecorrelationLoss, NoiseSpectrumLoss, SpectrumLoss
 from stlia.stl_torch import DenoiseLoss, Stats, as_real
 from stlia.unet import UNet
 
 
-TERMS = ("data", "res", "cross", "l1", "l2", "l3", "cl", "tcl", "rcl")
+TERMS = ("data", "res", "cross", "l1", "l2", "l3", "cl", "tcl", "rcl", "xcl")
 DELOUIS = ("l1", "l2", "l3")
 
 
@@ -360,8 +360,8 @@ def parser():
     p.add_argument("--loss", default="data=1,res=1,cross=1",
                    help="weights of the terms data, res, cross, of the Delouis et al. (2022) terms l1, l2, l3, "
                         "of the binned half-mission cross spectrum cl, of the cross spectrum tcl of the 857 GHz map "
-                        "with u against that with d, and of the spectrum rcl of d - u against that of the noise "
-                        "(tcl and rcl: spectra of the fields of the statistics, Q and U or, with --pol-stats eb, "
+                        "with u against that with d, of the spectrum rcl of d - u against that of the noise, "
+                        "and of the cross spectrum xcl of u and d - u against zero (tcl, rcl and xcl: spectra of the fields of the statistics, Q and U or, with --pol-stats eb, "
                         "E and B; the --cl-* options apply)")
     p.add_argument("--stat-masks", default=None,
                    help="scattering statistics averaged under galactic masks: latitude cuts b0 in degrees, "
@@ -370,6 +370,10 @@ def parser():
     p.add_argument("--cl-masks", default="0,30,45",
                    help="cl: galactic latitude cuts b0 in degrees, comma-separated: the masks keep abs(b) > b0 (0: full sky)")
     p.add_argument("--cl-lmin", type=int, default=10, help="cl: first multipole")
+    p.add_argument("--input-noise", type=float, default=0.0,
+                   help="training only: the network receives d + alpha n, n a training noise simulation (the same "
+                        "for Q and U, random sign), while the terms compare u with d; then u = d no longer "
+                        "satisfies xcl, since d - u = -alpha n is correlated with u (--noise pr3sims)")
     p.add_argument("--rcl-masks", default="30,45,60",
                    help="rcl: galactic latitude cuts of its masks; on real data its target C(d, d) - C(d1, d2) is "
                         "dominated in the Galactic plane by the difference between d and the mean of d1 and d2")
@@ -458,7 +462,7 @@ def main(argv=None):
 
     train_sky, test_sky = load(a.train_field), load(a.test_field)
     a.halfmission = any(weights[t] for t in DELOUIS + ("cl",))
-    spec_terms = weights["cl"] or weights["tcl"] or weights["rcl"]
+    spec_terms = any(weights[t] for t in ("cl", "tcl", "rcl", "xcl"))
     if spec_terms:
         if a.cl_backend == "auto":
             import stl_port.native
@@ -482,7 +486,8 @@ def main(argv=None):
                 cl_cache[key] = SpectrumLoss(spectra, d1, d2)
             return cl_cache[key]
     scalar_cl = weights["cl"] and a.cl_spin == 0  # per field; spin 2: one term for (Q, U)
-    assert not (weights["tcl"] or weights["rcl"]) or (a.cl_spin == 0 and a.pol_stats != "chi"),         "tcl and rcl: spectra of scalar maps (--cl-spin 0, --pol-stats qu or eb)"
+    assert not (weights["tcl"] or weights["rcl"] or weights["xcl"]) or (a.cl_spin == 0 and a.pol_stats != "chi"),         "tcl, rcl and xcl: spectra of scalar maps (--cl-spin 0, --pol-stats qu or eb)"
+    assert not weights["xcl"] or a.real, "xcl: --real (its variance comes from the half-mission maps)"
     assert not a.joint or (a.real and a.optimizer == "adam"), "--joint: --real and the adam optimizer"
     assert a.pol_stats != "eb" or (a.joint and a.cl_spin == 0), \
         "--pol-stats eb: --joint, and cl on the E and B maps (--cl-spin 0)"
@@ -532,7 +537,7 @@ def main(argv=None):
     spec_cache, rcl_cache = {}, {}
 
     def spectrum_terms(u, d, field, hm=None):
-        """The terms tcl and rcl of `u` (with gradient) and `d`: spectra of u
+        """The terms tcl, rcl and xcl of `u` (with gradient) and `d`: spectra of u
         alone, without noise draws or biases (live and frozen alike)."""
         out = {}
         if weights["tcl"]:
@@ -554,6 +559,13 @@ def main(argv=None):
                     sims = pool.train[0] if pool.mode == "pr3sims" else pool.draw(40)
                     rcl_cache[field] = NoiseSpectrumLoss(rspectra, sims)
             out["rcl"] = rcl_cache[field](rspectra(d - u))
+        if weights["xcl"]:
+            key = ("xcl", field, hm[0].data_ptr())
+            if key not in spec_cache:
+                if len(spec_cache) > 8:
+                    spec_cache.clear()
+                spec_cache[key] = DecorrelationLoss(spectra, hm[0], hm[1])
+            out["xcl"] = spec_cache[key](u, d - u)
         return out
 
     def delouis(u, d, d1, d2, field, generator=None, test=False):
@@ -740,6 +752,17 @@ def main(argv=None):
         fixed = {f: (s, *observe(f, s, test=True, generator=gen))
                  for f, s in ((a.train_field, train_sky), (a.test_field, test_sky))}
     fields = list(fixed)
+    in_noise, in_fields = dict(noise), list(fields)  # (Q, U) noise pools, before the E/B transform
+    assert not a.input_noise or all(n.mode == "pr3sims" for n in in_noise.values()), "--input-noise: --noise pr3sims"
+
+    def perturb(names=None):
+        """--input-noise: alpha n `[len(names), npix]` for the fields `names` (default all),
+        one training simulation for all of them, with a random sign."""
+        names = names or in_fields
+        pool = in_noise[names[0]].train[0]
+        k = int(torch.randint(len(pool), (1,), device=dev))
+        sign = 1.0 if torch.rand(1, device=dev).item() < 0.5 else -1.0
+        return a.input_noise * sign * torch.stack([in_noise[g].train[0][k] for g in names])
 
     eb, qu_fields, fixed_qu, last_qu = None, [], {}, {}
     if a.joint:
@@ -845,7 +868,8 @@ def main(argv=None):
             def bias_all(z, generator):
                 return {f: estimate_bias(z[i].detach(), f, generator=generator) for i, f in enumerate(fields)}
         return run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, bias_all,
-                         weights, evaluate, show, {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, eb)
+                         weights, evaluate, show, {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, eb,
+                         perturb if a.input_noise else None)
     if a.optimizer == "lbfgs":
         return run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev,
                          {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, frozen)
@@ -863,7 +887,8 @@ def main(argv=None):
         else:
             f = a.train_field
             d, hm = observe(f, train_sky)
-        u = net(d[None], d.std(), cond=cond)[0]
+        x = d + perturb([f])[0] if a.input_noise else d
+        u = net(x[None], d.std(), cond=cond)[0]
         if frozen and step > a.bias_warmup:
             if f not in bias or (step - 1 - a.bias_warmup) % a.bias_every < len(fields):
                 bias[f] = estimate_bias(u.detach(), f, generator=bias_gen)  # at the current network output
@@ -896,14 +921,15 @@ def main(argv=None):
 
 
 def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bias, weights, evaluate, show, meta,
-              transform=None):
+              transform=None, perturb=None):
     """Adam training of a joint (Q, U) network on the fixed PR3 maps: every step
     denoises both fields at once and sums their terms (``--joint``).  With
     frozen biases, `estimate_bias(z, generator)` re-estimates them every
     `--bias-every` steps at the current output `z` (after `--bias-warmup` steps
     with live biases).
     `transform` (``--pol-stats eb``): the map from the (Q, U) output to the
-    fields of the terms."""
+    fields of the terms.  `perturb` (``--input-noise``): the noise added to the
+    input of the network at every step."""
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.steps)
     nparams = sum(q.numel() for q in net.parameters())
@@ -914,7 +940,7 @@ def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bia
     show(0, evals[0])
     started = time.time()
     for step in range(1, a.steps + 1):
-        u2 = net(d2[None], d2.std(), cond=cond)[0]
+        u2 = net((d2 if perturb is None else d2 + perturb())[None], d2.std(), cond=cond)[0]
         x = u2.detach().requires_grad_()
         y = x if transform is None else transform(x)  # the fields of the terms
         z = y.detach().requires_grad_()
