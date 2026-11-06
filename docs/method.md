@@ -140,7 +140,7 @@ side=64$, with $\alpha=0.5$, it did not remove more noise than `xcl` alone in 40
 
 ## A joint (Q, U) network
 
-With `--joint` (`--real` only), one network ({class}`~stlia.unet.UNet` with `maps=2`) takes the pair $(Q, U)$ and returns $(u_Q, u_U)$, with one input scale for both. Every step trains both fields: the scattering terms of each are summed, and the EE/BB spectrum term constrains the pair. Each field differentiates its terms in turn, because the engines keep the state of their last forward only. The gradients add up on the output, and go back through the network once.
+With `--joint` (`--real` only), one network ({class}`~stlia.unet.UNet` with `maps=2`) takes the pair $(Q, U)$ and returns $(u_Q, u_U)$, with one input scale for both. Every step trains both fields: the scattering terms of each are summed, and the EE/BB spectrum term constrains the pair. Each field differentiates its terms in turn, because the engines keep the state of their last forward only. The gradients add up on the output, and go back through the network once. With `--optimizer lbfgs`, the same terms are minimised over the pixels of the pair $(u_Q, u_U)$, with `--pol-stats qu` or `eb`: the per-map reference of the joint network. Frozen biases are then re-estimated at the start of every round after `--bias-warmup` rounds.
 
 ### Statistics of the E and B maps
 

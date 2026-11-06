@@ -488,7 +488,8 @@ def main(argv=None):
     scalar_cl = weights["cl"] and a.cl_spin == 0  # per field; spin 2: one term for (Q, U)
     assert not (weights["tcl"] or weights["rcl"] or weights["xcl"]) or (a.cl_spin == 0 and a.pol_stats != "chi"),         "tcl, rcl and xcl: spectra of scalar maps (--cl-spin 0, --pol-stats qu or eb)"
     assert not weights["xcl"] or a.real, "xcl: --real (its variance comes from the half-mission maps)"
-    assert not a.joint or (a.real and a.optimizer == "adam"), "--joint: --real and the adam optimizer"
+    assert not a.joint or a.real, "--joint: --real"
+    assert not (a.joint and a.optimizer == "lbfgs") or (a.pol_stats != "chi" and not a.input_noise),         "--joint with lbfgs: --pol-stats qu or eb, no --input-noise"
     assert a.pol_stats != "eb" or (a.joint and a.cl_spin == 0), \
         "--pol-stats eb: --joint, and cl on the E and B maps (--cl-spin 0)"
     assert a.pol_stats != "chi" or (a.joint and not any(weights[t] for t in ("res", "cross"))
@@ -804,7 +805,7 @@ def main(argv=None):
                 u2 = eb(u2)
             return {f: u2[i] for i, f in enumerate(fields)}
 
-        def joint_terms(u2, bias=None):
+        def joint_terms(u2, bias=None, generator=None):
             """Terms of `--loss` for the joint output `u2` `[2, npix]`, in parts: the
             scattering terms of each field, then the EE/BB term of the pair.  Each
             part must be differentiated before the next one is computed: the
@@ -814,7 +815,7 @@ def main(argv=None):
             else:
                 for i, f in enumerate(fields):
                     _, d, hm = fixed[f]
-                    yield frozen_losses(u2[i], d, f, bias[f], hm=hm) if bias else losses(u2[i], d, f, hm=hm)
+                    yield frozen_losses(u2[i], d, f, bias[f], hm=hm) if bias else                         losses(u2[i], d, f, generator=generator, hm=hm)
             if pol_loss is not None:
                 yield {"cl": pol_loss(spectra(u2, u2))}  # cross spectra of the half missions: no bias
 
@@ -867,6 +868,9 @@ def main(argv=None):
         else:
             def bias_all(z, generator):
                 return {f: estimate_bias(z[i].detach(), f, generator=generator) for i, f in enumerate(fields)}
+        if a.optimizer == "lbfgs":
+            return run_lbfgs_joint(a, d2, fields, qu_fields or fields, joint_terms, bias_all, weights, evaluate,
+                                   show, dev, {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, eb, last_qu)
         return run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, bias_all,
                          weights, evaluate, show, {"j": j, "coefficients": len(one.plan), "noise_rms": rms}, eb,
                          perturb if a.input_noise else None)
@@ -974,6 +978,79 @@ def run_joint(a, net, d2, cond, fields, joint_outputs, joint_terms, estimate_bia
     with open(os.path.join(a.out, "train.json"), "w") as f:
         json.dump({"args": vars(a), **meta, "parameters": nparams, "loss_weights": weights,
                    "seconds": time.time() - started, "loss_history": hist, "evals": evals}, f, indent=1)
+
+
+def run_lbfgs_joint(a, d2, fields, qu_fields, joint_terms, estimate_bias, weights, evaluate, show, dev, meta,
+                    transform=None, last_qu=None):
+    """:func:`run_lbfgs` for the joint terms (``--joint``): minimise them over the
+    pixels of the pair `u2` = (u_Q, u_U), starting from `d2`.  With
+    ``--pol-stats eb`` the terms are those of the E and B maps of `u2`
+    (`transform`); `last_qu` receives the (Q, U) maps for the figures.  With
+    frozen biases, `estimate_bias` is called at the start of every round after
+    `--bias-warmup` rounds."""
+    from stl_port.native import native_lbfgs
+
+    scale = d2.std(dim=1, keepdim=True).double().cpu().numpy()
+    x = d2.double().cpu().numpy() / scale
+    options = {"max_iter": a.lbfgs_iter, "history_size": a.lbfgs_history}
+    hist = {"round": [], "evaluations": [], "loss_start": [], "loss_end": [], **{t: [] for t in TERMS}}
+
+    def outputs(x):
+        u2 = torch.as_tensor(x * scale, device=dev, dtype=d2.dtype)
+        if last_qu is not None:
+            last_qu.update({f: u2[i] for i, f in enumerate(qu_fields)})
+        y = u2 if transform is None else transform(u2)
+        return {f: y[i] for i, f in enumerate(fields)}
+
+    evals = {0: evaluate(outputs=outputs(x))}
+    show(0, evals[0])
+    started = time.time()
+    for rnd in range(1, a.lbfgs_rounds + 1):
+        seed = 1000003 * (a.seed + 1) + rnd
+        last, bias = {}, None
+        if estimate_bias is not None and rnd > a.bias_warmup:
+            with torch.no_grad():
+                y0 = torch.as_tensor(x * scale, device=dev, dtype=d2.dtype)
+                y0 = y0 if transform is None else transform(y0)
+            bias = estimate_bias(y0, torch.Generator(device=dev).manual_seed(seed))
+
+        def objective(trial):
+            u2 = torch.tensor(np.array(trial) * scale, device=dev, dtype=d2.dtype, requires_grad=True)
+            y = u2 if transform is None else transform(u2)
+            z = y.detach().requires_grad_()
+            total, parts = 0.0, {}
+            g = torch.Generator(device=dev).manual_seed(seed)  # the same draws at every evaluation of the round
+            for part in joint_terms(z, bias, generator=g):
+                loss = sum(weights[k] * v for k, v in part.items())
+                loss.backward()  # gradient into z.grad, one part at a time
+                total += loss.item()
+                for k, v in part.items():
+                    parts[k] = parts.get(k, 0.0) + v.item()
+            if transform is None:
+                grad = z.grad
+            else:
+                y.backward(z.grad)
+                grad = u2.grad
+            last.update(parts)
+            return total, grad.detach().double().cpu().numpy() * scale
+
+        x, info = native_lbfgs(objective, x, options)
+        h = info["loss_history"]
+        hist["round"].append(rnd)
+        hist["evaluations"].append(info["evaluations"])
+        hist["loss_start"].append(h[0])
+        hist["loss_end"].append(min(h))
+        for t in TERMS:
+            hist[t].append(last.get(t))
+        print(f"round {rnd} evaluations {info['evaluations']} loss {h[0]:.6g} -> {min(h):.6g} "
+              + " ".join(f"{k} {v:.4g}" for k, v in last.items())
+              + f" {(time.time() - started) / rnd:.1f} s/round", flush=True)
+        evals[rnd] = evaluate(save=rnd == a.lbfgs_rounds, outputs=outputs(x))
+        show(rnd, evals[rnd])
+    with open(os.path.join(a.out, "train.json"), "w") as fh:
+        json.dump({"args": vars(a), **meta, "optimizer": "native STL L-BFGS (strong Wolfe)",
+                   "loss_weights": weights, "seconds": time.time() - started, "loss_history": hist,
+                   "evals": evals}, fh, indent=1)
 
 
 def run_lbfgs(a, fixed, fields, losses, weights, evaluate, show, dev, meta, frozen=None):
