@@ -63,6 +63,7 @@ The `stlia` modules, generated from the code.
 
 installation
 method
+rust_port
 user-guide/index
 reproduce
 cli
