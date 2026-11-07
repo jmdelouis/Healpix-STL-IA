@@ -16,6 +16,10 @@ gpu() {
     if [ -n "$GPU_OPTS" ]; then sbatch $GPU_OPTS -J "$1" -o $RUNS/slurm.%j.log scripts/train_gpu.slurm "$@"
     else bash scripts/train_gpu.slurm "$@"; fi
 }
+gpup() {
+    if [ -n "$GPU_OPTS" ]; then sbatch $GPU_OPTS -J "$1" -o $RUNS/slurm.%j.log scripts/train_patches_gpu.slurm "$@"
+    else bash scripts/train_patches_gpu.slurm "$@"; fi
+}
 cpu() {
     if [ -n "$CPU_OPTS" ]; then sbatch $CPU_OPTS -J "$1" -o $RUNS/slurm.%j.log scripts/train_cpu.slurm "$@"
     else bash scripts/train_cpu.slurm "$@"; fi
@@ -83,6 +87,10 @@ runs)
     STL=stl_sp2 gpu r3k_eb_c16 $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1         ${short/--steps 1000/--steps 3000} --channels 16,32,48,64,64,64
     # the same with u and d - u decorrelated (xcl)
     STL=stl_sp2 gpu r1k_ebx $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1,xcl=1 $short
+    # the loss of r1k_eb on the 48 discs of the nside 2 cells, and the full-sky control with the same network (nside 64)
+    pt="--nside 64 --real --joint --pol-stats eb --cond log857 --bias frozen --bias-realizations 8 --bias-every 50         --loss data=1,l1=1,l2=1,l3=1,cl=1 --levels 3 --channels 32,64,96 --steps 1000 --lr 1e-3 --log-every 50 --sims-train 10-15"
+    STL=stl_sp2 gpup pt64_cells $pt --eval-every 250 --centre-nside 2 --radius 27 --core 17 --j 4 --patches 8
+    STL=stl_sp2 gpu t64_jebl3p $pt --eval-every 500 --noise pr3sims --sims-test 10-15 --realizations 4 --cl-masks 0,30,45,60         --train-field Q --test-field U --norm pixel
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
