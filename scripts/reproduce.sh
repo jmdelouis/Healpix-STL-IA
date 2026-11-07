@@ -79,6 +79,8 @@ runs)
     # the per-map L-BFGS reference of r1k_eb, and r1k_eb with a narrow network
     STL=stl_sp2 gpu l1k_eb $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 $short --optimizer lbfgs         --lbfgs-rounds 10 --lbfgs-iter 50 --bias-warmup 0
     STL=stl_sp2 gpu r1k_eb_c16 $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 $short --channels 16,32,48,64,64,64
+    # the narrow E/B network over 3000 steps, to compare with r256_joint_eebb at equal training
+    STL=stl_sp2 gpu r3k_eb_c16 $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1         ${short/--steps 1000/--steps 3000} --channels 16,32,48,64,64,64
     # the same with u and d - u decorrelated (xcl)
     STL=stl_sp2 gpu r1k_ebx $best --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1,xcl=1 $short
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
@@ -88,7 +90,7 @@ figures)
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256
     $PY scripts/make_figures_real.py $RUNS/r256_dl123 $R/data/maps $RUNS/figs_real
     $PY scripts/make_figures_real.py $RUNS/l256_dl123 $R/data/maps $RUNS/figs_lbfgs
-    for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi r1k_ref r1k_res r1k_eb r1k_eb_s1 r1k_ebx l1k_eb r1k_eb_c16; do
+    for r in r256_fz r256_fz_cl857 l256_fz_cl r256_cl857 l256_cl r256_joint_eebb r256_native r256_fz_cl857_mk l256_fz_mk r256_sig_wu r256_eb r256_chi r1k_ref r1k_res r1k_eb r1k_eb_s1 r1k_ebx l1k_eb r1k_eb_c16 r3k_eb_c16; do
         $PY scripts/make_figures_real.py $RUNS/$r $R/data/maps $RUNS/figs_$r
     done
     $PY scripts/make_figure_highlat.py $R/data/maps $RUNS/highlat_spectra.pdf --lmax 449 --bins 10 \
