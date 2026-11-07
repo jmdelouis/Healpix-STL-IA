@@ -53,7 +53,7 @@ runs)
     gpu l256_cl --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45 --realizations 4         --optimizer lbfgs --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     # one network for (Q, U), with the EE/BB spectrum loss (STL-Dev-MPI >= 92f2aef, built in $R/stl_sp2)
     STL=stl_sp2 gpu r256_joint_eebb --nside 256 --real --joint --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-spin 2         --cl-backend stl --cl-masks 0,30,45,60 --cond log857 $common
-    # the native U-Net of STL-Dev-MPI (Rust, branch claude/native-unet b580210, built in $R/stl_nu), as r256_fz
+    # the native U-Net of STL-Dev-MPI (Rust, commit b580210, built in $R/stl_nu), as r256_fz
     if [ -n "$GPU_OPTS" ]; then
         STL=stl_nu sbatch $GPU_OPTS -J r256_native -o $RUNS/slurm.%j.log scripts/train_native.slurm r256_native             --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --bias-every 50 --bias-realizations 40             --loss data=1,l1=1,l2=1,l3=1 --sims 10-49 --cond none --eval-every 500 --engine-cache-bytes 0
     fi
@@ -62,6 +62,11 @@ runs)
     for pol in spin eb; do
         STL=stl_nj sbatch $GPU_OPTS -J n256_$pol -o $RUNS/slurm.%j.log scripts/train_native.slurm n256_$pol             --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45             --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49             --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol $pol
     done
+    # the same on the E and B maps with 16-64 channels per level, as r3k_eb_c16
+    STL=stl_nj sbatch $GPU_OPTS -J n256_eb_c16 -o $RUNS/slurm.%j.log scripts/train_native.slurm n256_eb_c16 \
+        --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
+        --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
+        --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol eb --channels 16,32,48,64,64,64
     # spread between trainings: r256_native again with seeds 1-3 (seed 0 is r256_native)
     if [ -n "$GPU_OPTS" ]; then
         for s in 1 2 3; do
