@@ -233,6 +233,18 @@ With pixel normalisation and a fixed input scale, the network on a disc equals t
 
 The disc statistics run on CPU threads, or on the GPU (`--stl-backend gpu`).
 
+### On the PR3 maps
+
+`--real` trains on the PR3 maps with the terms of the full-sky runs, computed on every disc ({mod}`stlia.patch_real`): `data`, `l1`, `l2`, `l3` on the disc statistics, and `cl` on binned pseudo-spectra of the disc. The options are those of `stlia-train-denoise`: `--joint`, `--pol-stats {qu,eb}`, `--cond`, `--bias {live,frozen}` (a frozen bias is kept per disc and re-estimated every `--bias-every` steps), `--bias-all`, `--cl-lmin`, `--cl-lmax`, `--cl-width`.
+
+With `--pol-stats eb`, the disc maps of (Q, U) are multiplied by a cosine taper, equal to 1 in the core and to 0 at the edge, and turned into E and B by spherical harmonics on the full sky, zero outside the disc. The spectra of `cl` are those of the same tapered maps, divided by the mean square of the taper.
+
+`--centre-nside 2` puts the centres on the 48 cells of nside 2: with `--radius 27 --core 17`, the cores cover the sky. The evaluation runs the trained network on the full sky.
+
+At nside 64 (`pt64_cells`, 1000 steps, joint E/B, frozen biases), the spectra of u stay those of the data within 2 % at |b| > 30 deg. Below ℓ = 60, however, the network removes almost no noise: 3 to 8 % of the noise power, against 50 to 80 % for the same network trained on the full sky (`t64_jebl3p`). A disc of 27 deg does not constrain the large scales.
+
+`stlia-train-denoise --norm pixel` gives the full-sky network the normalisation of the disc network, as a control.
+
 ## Mock and real data
 
 - **Mock data** (default). The sky $s$ is a Planck PR3 map. Observations add FFP10 noise draws: simulations 10–49 for training and 0–9 for evaluation. The evaluation compares $u$ with $s$.

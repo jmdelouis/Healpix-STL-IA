@@ -252,12 +252,15 @@ class UNet(nn.Module):
 
     def forward_patches(self, d, patches, cond=None):
         """`d`: `[B, n]` values on the flat pixels of `patches`
-        (`stlia.regions.Patches`, levels as the network), `cond` `[B, cond, n]`
-        the conditioning maps on the same pixels; returns `u`."""
+        (`stlia.regions.Patches`, levels as the network; `[B, 2, n]` with
+        `maps` = 2), `cond` `[B, cond, n]` the conditioning maps on the same
+        pixels; returns `u`, shaped like `d`."""
         assert self.conv == "sphere" and self.norm == "pixel", "patches need sphere convolutions and pixel norm"
-        assert self.maps == 1, "patches: one map"
+        assert d.dim() == (2 if self.maps == 1 else 3), "patches: d is [B, n], or [B, maps, n]"
         scale = self.input_scale(d)
-        x = (d / scale).float()[:, None]
+        x = (d / scale).float()
+        if self.maps == 1:
+            x = x[:, None]
         conds = self._cond_levels(cond, lambda c, k: patches.pool(c, k))
         if conds:
             x = torch.cat([x, conds[0]], 1)
@@ -271,7 +274,8 @@ class UNet(nn.Module):
             k = self.levels - 2 - i
             parts = [patches.up(x, k), skips[k]] + ([conds[k]] if conds else [])
             x = dec(torch.cat(parts, 1), patches.levels[k])
-        return d - scale * self.head(x)[:, 0].to(d.dtype)
+        r = self.head(x).to(d.dtype)
+        return d - scale * (r[:, 0] if self.maps == 1 else r)
 
     def stencils(self, device):
         """Stencils of every level, built on first use on the device of the maps."""

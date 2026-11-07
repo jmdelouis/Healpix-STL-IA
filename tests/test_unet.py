@@ -135,3 +135,20 @@ def test_joint_qu_network(tmp_path):
     assert ck["maps"] == 2
     with torch.no_grad():
         torch.testing.assert_close(net2(qu, scale=1.0), net.eval()(qu, scale=1.0))
+
+
+def test_joint_patches_match_full_sky_near_centre():
+    """maps=2 on a disc: [B, 2, n] in and out, equal to the full sky near the centre."""
+    nside, levels = 32, 2
+    torch.manual_seed(0)
+    qu = torch.stack([sky(seed=1, nside=nside, batch=1), sky(seed=2, nside=nside, batch=1)], 1)
+    net = UNet(nside, levels, [8, 8], norm="pixel", scale=1.0, maps=2)
+    torch.nn.init.normal_(net.head.weight, std=0.1)
+    vecs = pixel_vectors(nside, "cpu")
+    ids = disc_ids(vecs, 1000, math.radians(30))
+    with torch.no_grad():
+        full = net(qu)[0]
+        part = net.forward_patches(qu[:, :, ids], Patches([ids], nside, levels))[0]
+    near = (vecs[ids] @ vecs[1000]) >= math.cos(math.radians(5))
+    assert part.shape == (2, len(ids))
+    torch.testing.assert_close(part[:, near], full[:, ids][:, near], atol=5e-4, rtol=1e-4)

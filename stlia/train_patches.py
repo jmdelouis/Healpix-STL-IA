@@ -156,6 +156,22 @@ def parser():
     p.add_argument("--seed", type=int, default=0, help="seed of the draws, of torch and of numpy")
     p.add_argument("--log-every", type=int, default=10, help="steps between two log lines")
     p.add_argument("--eval-every", type=int, default=250, help="steps between two evaluations (and checkpoints)")
+    g = p.add_argument_group("PR3 maps (--real, see stlia.patch_real)")
+    g.add_argument("--real", action="store_true",
+                   help="denoise the PR3 maps themselves (d, d1, d2), with the terms data, l1, l2, l3 and cl")
+    g.add_argument("--joint", action="store_true", help="--real: one network for (Q, U)")
+    g.add_argument("--pol-stats", default="qu", choices=["qu", "eb"],
+                   help="--real: fields of the terms; eb, the E and B maps of the tapered disc (needs --joint)")
+    g.add_argument("--cond", default="none", help="--real: conditioning maps, log857 and/or sigma (e.g. log857+sigma)")
+    g.add_argument("--bias", default="live", choices=["live", "frozen"],
+                   help="--real: noise biases from fresh draws at every step, or frozen per disc")
+    g.add_argument("--bias-realizations", type=int, default=40, help="--real: draws of a frozen bias")
+    g.add_argument("--bias-every", type=int, default=50, help="--real: steps before a disc re-estimates its bias")
+    g.add_argument("--bias-warmup", type=int, default=0, help="--real: steps with live biases first")
+    g.add_argument("--bias-all", action="store_true", help="--real: frozen bias on every coefficient")
+    g.add_argument("--cl-lmin", type=int, default=20, help="--real: first multipole of the disc spectra")
+    g.add_argument("--cl-lmax", type=int, default=None, help="--real: last multipole (default 2 nside - 1)")
+    g.add_argument("--cl-width", type=int, default=30, help="--real: width of the multipole bins")
     return p
 
 
@@ -165,10 +181,11 @@ def main(argv=None):
 
     a = parser().parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
-    weights = {t: 0.0 for t in TERMS}
+    terms = TERMS + (("data", "cl") if a.real else ())
+    weights = {t: 0.0 for t in terms}
     for item in a.loss.split(","):
         k, _, v = item.partition("=")
-        assert k in TERMS, f"unknown loss term {k}"
+        assert k in terms, f"unknown loss term {k}"
         weights[k] = float(v or 1)
     if a.threads:
         torch.set_num_threads(a.threads)
@@ -213,6 +230,9 @@ def main(argv=None):
             [int(torch.argmax(fine @ v)) for v in coarse])
     else:
         candidates = np.arange(npix)
+    if a.real:
+        from stlia.patch_real import run_real
+        return run_real(a, weights, dev, pe, candidates, rng)
     run = {"engine": pe, "box": {}, "generation": 0, "radius": a.radius, "core": a.core, "gpu": gpu}
     ncoeff = pe.ncoeff
     channels = [int(c) for c in a.channels.split(",")]

@@ -398,6 +398,8 @@ def parser():
                         "(torch), or by the engine when the installed STL-Dev-MPI has it (auto)")
     p.add_argument("--levels", type=int, default=None, help="levels of the U-Net (default: down to nside 8)")
     p.add_argument("--channels", default=None, help="channels per level, comma-separated (default: 32,64,96,128,...)")
+    p.add_argument("--norm", default="group", choices=["group", "pixel"],
+                   help="normalisation of the U-Net: group (over the map) or pixel (local, as on patches)")
     p.add_argument("--cond", default="none", choices=["none", "log857", "sigma", "log857+sigma"],
                    help="conditioning maps of the U-Net, standardised, given at the input and to every decoder "
                         "level: log857, the log of the 857 GHz intensity (local dust intensity); sigma, the log of "
@@ -720,7 +722,7 @@ def main(argv=None):
     if conds:
         c = np.stack([(x - x.mean()) / x.std() for x in conds])
         cond = torch.as_tensor(c, device=dev, dtype=torch.float32)[None]
-    net = UNet(a.nside, levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz,
+    net = UNet(a.nside, levels, channels, conv=a.conv, gauge=a.gauge, ksz=a.ksz, norm=a.norm,
                cond=len(conds), maps=2 if a.joint else 1).to(dev)
     if a.init:
         net.load_state_dict(torch.load(a.init, map_location=dev)["state"])
