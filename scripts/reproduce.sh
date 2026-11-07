@@ -57,6 +57,11 @@ runs)
     if [ -n "$GPU_OPTS" ]; then
         STL=stl_nu sbatch $GPU_OPTS -J r256_native -o $RUNS/slurm.%j.log scripts/train_native.slurm r256_native             --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --bias-every 50 --bias-realizations 40             --loss data=1,l1=1,l2=1,l3=1 --sims 10-49 --cond none --eval-every 500 --engine-cache-bytes 0
     fi
+    # the joint native network (branch claude/native-unet-joint 45d3e17, built in $R/stl_nj) with the options of
+    # r1k_eb over 3000 steps: statistics on chi = conj-eth^2 (Q + iU) (--pol spin), or a network on the E and B maps (--pol eb)
+    for pol in spin eb; do
+        STL=stl_nj sbatch $GPU_OPTS -J n256_$pol -o $RUNS/slurm.%j.log scripts/train_native.slurm n256_$pol             --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45             --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49             --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol $pol
+    done
     # spread between trainings: r256_native again with seeds 1-3 (seed 0 is r256_native)
     if [ -n "$GPU_OPTS" ]; then
         for s in 1 2 3; do
