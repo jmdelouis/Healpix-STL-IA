@@ -31,9 +31,9 @@ Code:
   - It provides the scattering statistics: the Rust engine `stl-bridge` and its Python wrapper `stl_port.native`.
   - The full-sky runs of Sect. 4 used its parent commit `66975a4dead97b8828721b6fbb67b2147a3fed48`. The full-sky statistics are identical in both commits.
   - `20329e1` adds the GPU disc engine and stops reading disc interpolation cells of weight <= 1e-9, a change at the rounding level.
-  - `9038114` (branch `claude/masked-stats`) adds the masked statistics of the runs `*_mk`.
-  - `5648ba1` (branch `claude/spectrum`, built on `9038114`) adds `SpectrumEngine`, a differentiable `anafast`. With it, `--cl-backend auto` computes the spectrum loss in the engine. Without it, the same loss comes from the transforms of `stlia.sht`; the two agree to 1e-12.
-  - The nside 64 runs of Sect. 3 used an earlier build of the same full-sky statistics (branch `claude/amortized-synthesis`).
+  - `9038114` adds the masked statistics of the runs `*_mk`.
+  - `5648ba1` (built on `9038114`) adds `SpectrumEngine`, a differentiable `anafast`. With it, `--cl-backend auto` computes the spectrum loss in the engine. Without it, the same loss comes from the transforms of `stlia.sht`; the two agree to 1e-12.
+  - The nside 64 runs of Sect. 3 used an earlier build of the same full-sky statistics (an earlier commit of STL-Dev-MPI).
 
 ## 1. Work directory and environment
 
@@ -57,7 +57,7 @@ git -C $R/stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
 # masked statistics (runs *_mk): a second checkout at 9038114 in $R/stl_mk/src, built with STL=stl_mk
 # spectrum loss in the engine: a checkout at 5648ba1 (it also has the masked statistics), built with STL=stl_sp
 # EE/BB spectrum loss of the joint (Q, U) network: a checkout at 92f2aef, built with STL=stl_sp2
-# local spin-2 statistics (--pol-stats chi, run r256_chi): a checkout at f4cf030 (branch claude/spin-eth), STL=stl_spin
+# local spin-2 statistics (--pol-stats chi, run r256_chi): a checkout at f4cf030, STL=stl_spin
 ```
 
 `scripts/env.sh` sets the environment from a few variables:
@@ -203,7 +203,7 @@ The reference values are those of Tables 1 and 2 of the paper. For `n256_data`, 
 
 ### Native U-Net (STL-Dev-MPI, Rust)
 
-The U-Net of `stlia` also exists in Rust in STL-Dev-MPI (`NativeUNet`, branch `claude/native-unet`), trained with everything on one GPU. Build that branch (commit `b580210`) in `$R/stl_nu` (`STL=stl_nu`, as above). The run `r256_native` trains it as `r256_fz` (`scripts/train_native.slurm`, driver `train_native_unet.py` of STL-Dev-MPI). To time one frozen-bias step against the torch pipeline at nside 64 and 256:
+The U-Net of `stlia` also exists in Rust in STL-Dev-MPI (`NativeUNet`, commit `b580210`), trained with everything on one GPU. Build that commit in `$R/stl_nu` (`STL=stl_nu`, as above). The run `r256_native` trains it as `r256_fz` (`scripts/train_native.slurm`, driver `train_native_unet.py` of STL-Dev-MPI). To time one frozen-bias step against the torch pipeline at nside 64 and 256:
 
 ```bash
 STL=stl_nu sbatch $GPU_OPTS -o $RUNS/slurm.%j.log scripts/bench_native.slurm   # -> $RUNS/bench_native/*.json

@@ -198,8 +198,8 @@ class Noise:
 
 class ChiTerms:
     """The terms of `--loss` on the local chi_E + i chi_B = conj-eth^2 (Q + iU) of
-    the spin-2 engine of STL-Dev-MPI (``NativeEngine(spin=2)``, branch
-    claude/spin-eth: conj-eth^2 at the finest level, then the scalar pyramid of
+    the spin-2 engine of STL-Dev-MPI (``NativeEngine(spin=2)``, commit
+    f4cf030: conj-eth^2 at the finest level, then the scalar pyramid of
     the engine) for a joint (Q, U) output `u`::
 
         data   mean_i S(chi(u + n_i))               vs  S(chi(d))
@@ -391,7 +391,7 @@ def parser():
                         "(stlia.polar, exact spin-2 transforms of the full sky), which do not depend on the frame "
                         "of Q and U; with cl (spin 0), the spectra of the E and B maps; chi, the local "
                         "chi_E + i chi_B = conj-eth^2 (Q + iU) of the spin-2 engine of STL-Dev-MPI (NativeEngine "
-                        "spin=2, branch claude/spin-eth f4cf030 or later), with masks; terms data, l1, l2, l3 (l3: scalar 857 GHz x "
+                        "spin=2, commit f4cf030 or later), with masks; terms data, l1, l2, l3 (l3: scalar 857 GHz x "
                         "chi), and cl with --cl-spin 2")
     p.add_argument("--cl-backend", default="auto", choices=["auto", "torch", "stl"],
                    help="cl: spectra by the SpectrumEngine of STL-Dev-MPI (stl), by the transforms of stlia.sht "

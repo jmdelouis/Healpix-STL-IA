@@ -29,7 +29,7 @@ pairs and the spectra are EE and BB, for a joint (Q, U) network
 Two backends compute the pseudo-spectra: ``torch``, the ring-FFT transform of
 :mod:`stlia.sht` through ``torch.autograd``, and ``stl``, the differentiable
 ``anafast`` of the STL-Dev-MPI engine (``stl_port.native.SpectrumEngine``,
-branch ``claude/spectrum``), on the CPU or the GPU.
+commit ``5648ba1``), on the CPU or the GPU.
 """
 
 import math

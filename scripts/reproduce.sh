@@ -79,7 +79,7 @@ runs)
     # 500 steps of live biases first; then the same as one (Q, U) network with every term on the E and B maps
     STL=stl_sp2 gpu r256_sig_wu --nside 256 --real --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45,60         --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500 --bias-realizations 40 --bias-every 50 $common
     STL=stl_sp2 gpu r256_eb --nside 256 --real --joint --pol-stats eb --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-masks 0,30,45,60         --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500 --bias-realizations 40 --bias-every 50 $common
-    # the same with the local spin-2 statistics chi = conj-eth^2 (Q + iU) of the engine (claude/spin-eth f4cf030)
+    # the same with the local spin-2 statistics chi = conj-eth^2 (Q + iU) of the engine (commit f4cf030)
     STL=stl_spin gpu r256_chi --nside 256 --real --joint --pol-stats chi --loss data=1,l1=1,l2=1,l3=1,cl=1 --cl-spin 2         --cl-backend stl --cl-masks 0,30,45,60 --stat-masks 0,20,30,45 --cond log857+sigma --bias frozen --bias-warmup 500         --bias-realizations 40 --bias-every 50 $common
     # 1000 steps: the best configuration, then L2 replaced by Phi(d - u) = Phi(n) (res) with the spectra
     # of the 857 GHz map against u (tcl) and of d - u against the noise of d (rcl)

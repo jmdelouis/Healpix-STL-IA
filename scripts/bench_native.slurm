@@ -1,6 +1,6 @@
 #!/bin/bash
 # Time and memory of one frozen-bias training step (data, l1, l2, l3), native
-# U-Net of STL-Dev-MPI (NativeUNet, branch claude/native-unet, built in
+# U-Net of STL-Dev-MPI (NativeUNet, commit b580210, built in
 # $R/$STL) against the torch pipeline of train_denoise.py, on one GPU:
 #
 #   STL=stl_nu sbatch $GPU_OPTS -o $RUNS/slurm.%j.log scripts/bench_native.slurm

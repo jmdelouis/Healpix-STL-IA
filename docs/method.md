@@ -152,7 +152,7 @@ $$ (E, B) = \mathcal{T}(Q, U),\qquad \mathcal{T}:\ (Q,U)\xrightarrow{\ \text{spi
 
 ### Local spin-2 statistics: $\bar\eth^2$ in the engine
 
-With `--pol-stats chi` (`--joint`), the statistics come from the spin-2 engine of STL-Dev-MPI (`NativeEngine(spin=2)`, branch `claude/spin-eth`). It computes
+With `--pol-stats chi` (`--joint`), the statistics come from the spin-2 engine of STL-Dev-MPI (`NativeEngine(spin=2)`, commit `f4cf030`). It computes
 
 $$ \chi_E + i\chi_B = \bar\eth^2 (Q + iU), $$
 
