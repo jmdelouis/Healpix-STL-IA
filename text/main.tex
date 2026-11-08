@@ -1,9 +1,9 @@
 % Healpix-STL-IA: amortised scattering denoising on the sphere (A&A draft).
 %
 % Built with the A&A class (aa.cls, aa.bst, from the A&A macro package of
-% aanda.org, kept in this directory).  Figures and the results table are
-% produced by scripts/make_figures.py of the GitHub repository
-% jmdelouis/Healpix-STL-IA from the train_denoise.py runs.
+% aanda.org, kept in this directory).  The figures of the reference run are
+% produced by scripts/make_figures_real.py of the GitHub repository
+% jmdelouis/Healpix-STL-IA; every run is listed in scripts/reproduce.sh.
 \documentclass{aa}
 \usepackage{graphicx}
 \usepackage{amsmath}
@@ -35,9 +35,9 @@
 \abstract
 {Scattering-transform statistics can separate a non-Gaussian sky component from noise without any clean training data: in \citet{delouis2022} the denoised \textit{Planck} dust map is the solution of an optimisation, run pixel by pixel with L-BFGS, that makes the statistics of the denoised map plus noise match those of the observed map.}
 {We replace this per-map optimisation by a network: a U-Net on the HEALPix sphere maps an observed map $d$ to a denoised map $u$ in one evaluation, and is trained with the same statistical constraint, so that no clean sky is ever used.}
-{The convolutions of the network are those of the scattering statistics: the STL/FOSCAT stencil, defined in the tangent plane of every pixel and interpolated on the HEALPix grid, with no base-face edges; its pooling is the NESTED pyramid. The loss compares the scattering covariances of $u+n_i$, for noise realisations $n_i$, with those of $d$, with the ergodic weights of the STL-Dev-MPI library, whose Rust engine gives the statistics and their exact gradient. We first test the method on mock observations with a known sky at $\nside=64$ and 256, then denoise the \textit{Planck} PR3 353\,GHz $Q$ and $U$ maps at $\nside=256$ with the losses of \citet{delouis2022}, frozen noise biases, statistics under galactic masks, a half-mission cross-spectrum loss and a conditioning on the 857\,GHz map, and compare with the per-map L-BFGS minimisation of the same loss.}
-{On mock data the network recovers the scattering covariances of the clean training sky to about one ergodic standard deviation from noisy maps only; the sphere convolutions have no face-edge artefacts. On the PR3 maps, the denoised map follows the noise-free half-mission cross spectrum to 1\% (EE) and 3\% (BB) at $30\le\ell<60$ and reaches 82--85\% of the EE cross spectrum at $200\le\ell<450$, while BB exceeds it by 25--28\%. A joint $(Q,U)$ network constrained by the EE and BB cross spectra separately follows both to 2\% from $\ell=30$ to 450; in the faintest three quarters of the sky the removed part has 0.8 to 1.0 times the rms of the noise. The per-map L-BFGS solution of the same loss gives the same spectra at small scales and is worse at large scales without the spectrum loss: the amortisation costs nothing, and the remaining errors come from the loss. A native U-Net in the Rust engine trains three times faster with a quarter of the GPU memory. Two trainings with the same loss end on maps that differ by 0.5 to 0.7 times the noise rms.}
-{An amortised scattering denoiser is a cheap replacement for the per-map optimisation. Its errors are now set by the loss, and should be quoted from several trainings.}
+{The convolutions of the network are those of the scattering statistics: the STL/FOSCAT stencil, defined in the tangent plane of every pixel, with no base-face edges; its pooling is the NESTED pyramid. One network maps $(Q,U)$ to $(Q,U)$. The loss is that of \citet{delouis2022}, with frozen noise biases, computed on the E and B maps of $u$ under galactic masks, plus a half-mission cross-spectrum term, and the network is conditioned on the 857\,GHz map and on the noise level. The network, the scattering covariances, their exact gradient and the optimiser all run in the Rust engine of STL-Dev-MPI on one GPU. We denoise the \textit{Planck} PR3 353\,GHz $Q$ and $U$ maps at $\nside=256$ and compare with the per-map L-BFGS minimisation of the same loss.}
+{Over $|b|>30^\circ$, the EE and BB spectra of the denoised map follow the noise-free half-mission cross spectrum to 1\% up to $\ell=300$ and to 5\% for $300\le\ell<450$. Over $|b|>20^\circ$ the removed part has 0.89--0.90 times the rms of the noise, and at large scales it stays below the noise spectrum. The per-map L-BFGS solution of the same loss gives the same spectra but removes less noise on $U$. A training takes 3\,h on one A100, 2.6 times less than with a PyTorch network calling the same engine. Two trainings with the same loss end on maps that differ by a large fraction of the noise. We list the alternatives tested on the way and why they were not kept.}
+{An amortised scattering denoiser is a cheap replacement for the per-map optimisation. Its errors are set by the loss, and should be quoted from several trainings.}
 
 \keywords{Methods: data analysis -- Methods: statistical -- ISM: dust, extinction -- Techniques: image processing}
 
@@ -49,37 +49,41 @@ Statistics built from the wavelet scattering transform \citep{mallat2012,bruna20
 
 Here we \emph{amortise} this optimisation: a network $f_\theta$ maps $d$ to $u=f_\theta(d)$, and its weights $\theta$, not the pixels of $u$, are trained with the same loss. Once trained, denoising a map costs one evaluation of the network. We use a U-Net \citep{ronneberger2015} laid on the HEALPix sphere \citep{gorski2005}, in line with the spherical, orientation-aware networks we developed for global ocean fields, and the scattering covariances of the STL-Dev-MPI library \citep{stldev}, whose Rust implementation provides the statistics and their exact gradient on the GPU.
 
-We first test the approach on mock observations with a known sky: the \textit{Planck} 353\,GHz polarisation maps with white noise at $\nside=64$ (Sect.~3), then with draws of the FFP10 noise simulations at $\nside=256$ (Sect.~\ref{sec:n256}). We then denoise the PR3 maps themselves (Sect.~\ref{sec:real}), compare the network with the per-map minimisation of the same loss, and describe a version of the U-Net written in the Rust engine (Sect.~\ref{sec:native}).
+We describe the method (Sect.~\ref{sec:method}) and one reference training on the PR3 353\,GHz maps at $\nside=256$ (Sects.~\ref{sec:data} and \ref{sec:results}), compared with the per-map minimisation of the same loss. Section~\ref{sec:native} gives the implementation and its cost. The reference setting is the result of a series of tests, on mock data and on the PR3 maps; Sect.~\ref{sec:history} lists them and the choices they led to.
 
-\section{Method}
+\section{Method}\label{sec:method}
 
 \subsection{Statistical denoising}
 
-The observation is $d=s+n$, with $s$ the sky and $n$ the noise, whose statistical model can be sampled. Let $\Phi$ denote the scattering covariances of a map: the mean and variance, the first-order moduli $S_1$, the power-like $S_2$, and the cross-scale and cross-orientation terms $S_3$ and $S_4$ \citep{cheng2024}, here 2522 complex coefficients at $\nside=64$ with $J=5$ scales and 4 orientations. Following \citet{delouis2022}, a good estimate $u$ of $s$ is such that $u+n_i$ is statistically indistinguishable from $d$ for noise realisations $n_i$. We use the reduced $\chi^2$
+The observation is $d=s+n$, with $s$ the sky and $n$ the noise, whose statistical model can be sampled. Let $\Phi$ denote the scattering covariances of a map: the mean and variance, the first-order moduli $S_1$, the power-like $S_2$, and the cross-scale and cross-orientation terms $S_3$ and $S_4$ \citep{cheng2024}, here 5882 complex coefficients at $\nside=256$ with $J=7$ scales and 4 orientations. Following \citet{delouis2022}, a good estimate $u$ of $s$ is such that $u+n_i$ is statistically indistinguishable from $d$ for noise realisations $n_i$. We use the reduced $\chi^2$
 \begin{equation}
   \mathcal{L}(u;d)=\frac{1}{N_c}\sum_c \frac{\bigl|\langle\Phi_c(u+n_i)\rangle_i-\Phi_c(d)\bigr|^2}{\sigma_c^2},
   \qquad \sigma_c^2=\frac{V_c(d)}{N_{{\rm pix},c}},
   \label{eq:loss}
 \end{equation}
-where the mean runs over $B=4$ realisations, $N_c$ is the number of coefficients, and $\sigma_c$ is the ergodic standard deviation of coefficient $c$: the spatial variance $V_c(d)$ of the terms that coefficient $c$ averages, over the $N_{{\rm pix},c}$ pixels of the pyramid level where it is computed. These are the weights of the ensemble synthesis of STL-Dev-MPI. \citet{delouis2022} minimised $\mathcal{L}$, with further terms, over the pixels of $u$.
+where the mean runs over the realisations, $N_c$ is the number of coefficients, and $\sigma_c$ is the ergodic standard deviation of coefficient $c$: the spatial variance $V_c(d)$ of the terms that coefficient $c$ averages, over the $N_{{\rm pix},c}$ pixels of the pyramid level where it is computed. These are the weights of the ensemble synthesis of STL-Dev-MPI. We add the three cross-statistics terms of \citet{delouis2022}, each a reduced $\chi^2$ of the same form, with $\tilde n$ fresh noise draws, $d_1$ and $d_2$ the two half-mission maps, and $T$ the \textit{Planck} 857\,GHz intensity map as dust template:
+\begin{align}
+  L_1&:\ \Phi(d_1,d_2)\ \text{vs}\ \langle\Phi(u+\tilde n_1,u+\tilde n_2)\rangle, \\
+  L_2&:\ \Phi(d,u)\ \text{vs}\ \langle\Phi(u+\tilde n,u)\rangle, \\
+  L_3&:\ \Phi(T,d)\ \text{vs}\ \langle\Phi(T,u+\tilde n)\rangle,
+\end{align}
+where $\Phi(a,b)$ are the cross scattering covariances of STL-Dev-MPI. They have no mean or variance coefficient, which Eq.~\eqref{eq:loss}, written $\mathcal{L}_{\rm data}$ below, constrains.
 
 \subsection{Amortisation with a spherical U-Net}\label{sec:unet}
 
-We set $u=f_\theta(d)$ and minimise the expectation of Eq.~\eqref{eq:loss} over observations $d$ with respect to $\theta$. No pixel of $s$ enters the loss: the training data are noisy maps only.
+We set $u=f_\theta(d)$ and minimise the loss with respect to $\theta$. No pixel of $s$ enters the loss: the training data are noisy maps only.
 
-The convolutions of the network are those of the scattering statistics: the stencil of STL-Dev and FOSCAT \citep{stldev,foscat}. For every pixel, the $3\times3$ taps of the kernel are laid in the tangent plane with the pixel size as spacing, rotated to the pixel and to its local gauge, and every tap is the bilinear interpolation of its four nearest pixels. The operator is the same everywhere on the sphere: the base faces of HEALPix play no role and there are no edges. It is applied as a sparse gather (four weights per pixel and tap, computed once per resolution with the torch port of the STL geometry) followed by a dense product with the kernel. With a single orientation the gauge has to be chosen: in the $\phi$ gauge the kernel follows the local meridian everywhere and is singular only at the two poles; in the cosmo gauge of the STL engine it is continuous through the poles and flipped between the two hemispheres. We use the $\phi$ gauge and compare with the cosmo gauge. A gauge cannot be avoided: for fields of fixed spin, a directional kernel, an output on the sphere and equivariance to all rotations cannot be obtained together, and the convolutions from the sphere to the sphere that are equivariant act as one multiplier per multipole \citep{mcewen2026}. A directional and equivariant layer has its output on the rotation group, with several orientations, as the wavelets of the statistics do.
+The convolutions of the network are those of the scattering statistics: the stencil of STL-Dev and FOSCAT \citep{stldev,foscat}. For every pixel, the $3\times3$ taps of the kernel are laid in the tangent plane with the pixel size as spacing, rotated to the pixel and to its local gauge, and every tap is the bilinear interpolation of its four nearest pixels. The operator is the same everywhere on the sphere: the base faces of HEALPix play no role and there are no edges. With a single orientation the gauge has to be chosen: in the $\phi$ gauge, used here, the kernel follows the local meridian everywhere and is singular only at the two poles. A gauge cannot be avoided: for fields of fixed spin, a directional kernel, an output on the sphere and equivariance to all rotations cannot be obtained together, and the convolutions from the sphere to the sphere that are equivariant act as one multiplier per multipole \citep{mcewen2026}. A directional and equivariant layer has its output on the rotation group, with several orientations, as the wavelets of the statistics do.
 
-The encoder descends the HEALPix NESTED pyramid by the mean of the four children of every pixel, and the decoder comes back up by copying every parent into its children. The network has four levels ($\nside=64$ to 8) with 32, 64, 96 and 128 channels, two convolutions with group normalisation and leaky ReLU per level, and skip connections ($9\times10^5$ parameters). It predicts a correction, $u=d-\sigma_d\,r_\theta(d/\sigma_d)$ with $\sigma_d$ the standard deviation of $d$; the last layer of $r_\theta$ starts at zero, so that the untrained network is the identity.
+The encoder descends the HEALPix NESTED pyramid by the mean of the four children of every pixel, and the decoder comes back up by copying every parent into its children. At $\nside=256$ the network has six levels ($\nside=256$ to 8) with 16, 32, 48, 64, 64 and 64 channels, two convolutions with group normalisation and leaky ReLU per level, and skip connections ($6.0\times10^5$ parameters). It takes the pair $(Q,U)$ and predicts a correction, $u=d-\sigma_d\,r_\theta(d/\sigma_d)$ with $\sigma_d$ the standard deviation of $d$; the last layer of $r_\theta$ starts at zero, so that the untrained network is the identity.
 
-A first version of the network used $3\times3$ planar convolutions on the twelve base-face images, padded with a ring of pixels from the neighbouring faces. It leaves artefacts along the face edges (Sect.~\ref{sec:artefacts}): the padded features are not re-oriented across an edge, and the eight vertices where only three faces meet have no corner neighbour. For a one-level network with random weights applied to a smooth field, the rms of the finest-level details along the face edges is 3.99 times that elsewhere with face images, and 1.04 times with the sphere stencil; a forward and backward pass of the U-Net takes 51\,ms at $\nside=64$ on a T4 in both cases.
+\subsection{Statistics of the E and B maps}\label{sec:eb}
 
-The statistics come from the Rust engine of STL-Dev-MPI through a PyTorch \citep{paszke2019} autograd function: the forward pass returns $\Phi(u+n_i)$ in double precision, and the backward pass returns the exact gradient with respect to the maps from the pyramidal reverse sweep of the library. The network runs in single precision and the statistics in double precision.
+$Q$ and $U$ are defined in a frame on the sphere, and their scattering statistics taken separately depend on it, whereas the statistics of the dust do not. FOSCAT \citep{foscat} computes spin-2 statistics with wavelets built from spin-2 harmonics, which give the wavelet coefficients of the E and B maps directly from $(Q,U)$; on the full sky, this is the scalar scattering of the E and B maps. Every term is therefore computed on $(E,B)=\mathcal{T}(Q,U)$, where $\mathcal{T}$ is the spin-2 analysis of $(Q,U)$ (three iterations, $\ell\le3\nside-1$) followed by the scalar synthesis of $a^E_{\ell m}$ and $a^B_{\ell m}$. The network maps $(Q,U)$ to $(Q,U)$, and $\mathcal{T}$ is applied to its output, with the gradient through its exact transpose, and once, before training, to the observations, the half-mission maps and every noise simulation. $\mathcal{T}$ is linear: a noise on $(Q,U)$ is a noise on $(E,B)$, and the noise biases below hold unchanged.
 
-\subsection{Per-map reference}\label{sec:lbfgs}
+$\mathcal{T}$ is not invertible on the pixel grid: with $P(x)=x-\mathcal{T}^{-1}\mathcal{T}(x)$ the part of a map lost in the round trip, $P$ holds 0.47 times the rms of an FFP10 noise map at $\nside=256$, mostly at the pixel scale. The loss does not see $P(u)$. Because the network outputs $(Q,U)$, it can still remove noise there (Sect.~\ref{sec:results}); a network that outputs E and B cannot (Sect.~\ref{sec:history}).
 
-The amortised denoiser is compared with the method it replaces: the same loss minimised over the pixels of $u$, for one observation, without a network. We start from $u=d$ and use the native L-BFGS of STL-Dev-MPI (strong-Wolfe line search) on $u/{\rm std}(d)$. The objective is the sum, over the observations of the two fields, of exactly the weighted loss terms of the network run it is compared with, computed by the same code. The noise realisations are drawn from the training simulations. They are fixed within a round of $50$ iterations, so that the loss is deterministic for the line search, and redrawn between the ten rounds. The noise biases are live or frozen, as in the network run it is compared with (Sect.~\ref{sec:variants}). The evaluation after each round is the one of the network runs.
-
-\subsection{Frozen noise biases, spectrum loss and conditioning}\label{sec:variants}
+\subsection{Frozen noise biases}\label{sec:variants}
 
 \paragraph{Which coefficients have a noise bias.} The noise bias of a coefficient is $\langle\Phi_k(u+n)\rangle-\Phi_k(u)$, where the noise enters as in the model of the term ($u+n$, or $u+\tilde n_1$ and $u+\tilde n_2$). It vanishes exactly when the noise enters the coefficient only linearly, since the noise has zero mean and the two half-mission noises are independent. With $a_z=\psi*a$ the wavelet coefficients of a map $a$, the cross coefficients of the engine are:
 \begin{itemize}
@@ -107,321 +111,92 @@ $S_2$ is bilinear. $S_3$ is linear in the map outside the modulus. $S_1$ and $S_
   \end{tabular}
 \end{table}
 
-\paragraph{Live and frozen biases.} In the runs above (``live'' biases), the model side of every scattering term is the average over $B=4$ draws, at the current $u$, of the statistics of $u$ plus noise, with the gradient through it. The noise bias is never formed. For the coefficients without bias, the draws only add scatter around the noise-free value.
+\paragraph{Live and frozen biases.} With ``live'' biases, the model side of every scattering term is the average over $B=4$ draws, at the current $u$, of the statistics of $u$ plus noise, with the gradient through it; the noise bias is never formed. In \citet{delouis2022}, the biases are frozen: the bias of each term, $B_k=\langle\Phi_k(u_0+n_i)\rangle-\Phi_k(u_0)$, is estimated at a fixed map $u_0$ with many realisations and kept constant, and the model is $\Phi_k(u)+B_k$, with the gradient through $\Phi_k(u)$ only. We freeze the biases with $M=40$ realisations, re-estimated every 50 steps from the current output of the network. $B_k$ is estimated only for the coefficients with a noise bias (Table~\ref{tab:bias}) and set to zero for the others: for those, an estimate would be zero up to the scatter of the $M$ draws, and subtracting it would only add that scatter. The first estimate made at the first output, which still contains the noise, would overestimate the bias of the cleaner map the training leads to. The first 200 steps therefore use live biases, and the first frozen estimate is made at an already denoised $u$.
 
-In \citet{delouis2022}, the biases are frozen. The bias of each term, $B_k=\langle\Phi_k(u_0+n_i)\rangle-\Phi_k(u_0)$, is estimated at a fixed map $u_0$ with many realisations and kept constant. The model is $\Phi_k(u)+B_k$, with the gradient through $\Phi_k(u)$ only. We implement this scheme with $M=40$ realisations. The bias is re-estimated at the start of every L-BFGS round, or every 50 steps from the current output of the network.
+\subsection{Masks, spectrum loss and conditioning}
 
-$B_k$ is estimated only for the coefficients with a noise bias (Table~\ref{tab:bias}), and set to zero for the others. For those, an estimate would be zero up to the scatter of the $M$ draws, and subtracting it would only add that scatter, refreshed at every estimate, and could make the solution drift. The spectrum term never has a bias, live or frozen.
-
-\paragraph{Warm-up of the frozen biases.} The first estimate of $B_k$ is made at the first output, which still contains the noise, while the bias that matters is that of the cleaner map the training leads to. Optionally, the first steps (or L-BFGS rounds) use live biases, and the first frozen estimate is made at an already denoised $u$.
-
-\paragraph{Masked statistics.} The full-sky ergodic weights of the scattering statistics are dominated by the Galactic plane, so that the faint high-latitude sky is hardly constrained. As in \citet{delouis2022}, every coefficient of every term can also be averaged under galactic masks, $|b|>0^\circ$, $20^\circ$, $30^\circ$ and $45^\circ$, each with its own ergodic weight. The wavelet fields remain those of the full sky; only the averages that define the coefficients are restricted to the mask, the mask of each coarser level containing the parents of the finer one. The masked averages and their gradient are computed by the STL-Dev-MPI engine, for 16\% (auto) to 27\% (cross) more time than the full-sky statistics with five masks.
+\paragraph{Masked statistics.} The full-sky ergodic weights of the scattering statistics are dominated by the Galactic plane, so that the faint high-latitude sky is hardly constrained. As in \citet{delouis2022}, every coefficient of every term is also averaged under galactic masks, $|b|>0^\circ$, $20^\circ$, $30^\circ$ and $45^\circ$, each with its own ergodic weight. The wavelet fields remain those of the full sky; only the averages that define the coefficients are restricted to the mask, the mask of each coarser level containing the parents of the finer one.
 
 \paragraph{Spectrum loss.} For the same reason, we add a term on the binned half-mission cross spectrum,
 \begin{equation}
   L_{\rm cl}:\ C_b(m\,d_1,m\,d_2)\ \text{vs}\ C_b(m\,u,m\,u),
 \end{equation}
-for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$ and $45^\circ$, and $60^\circ$ in the runs that say so (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$ to $2\nside-1$, each weighted by the Gaussian variance of the target. The two half-mission noises are independent, so $\langle C_b(u+\tilde n_1,u+\tilde n_2)\rangle=C_b(u,u)$. The model therefore has no noise term and no noise bias, whether the scattering biases are frozen or not. The spectra and their gradients come from the differentiable \texttt{anafast} of STL-Dev-MPI. They are the spectra of $Q$ and $U$ separately, as the network treats them. A joint $(Q,U)$ network constrains the EE and BB cross spectra instead.
+for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$, $45^\circ$ and $60^\circ$ (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$, each weighted by the Gaussian variance of the target. The two half-mission noises are independent, so $\langle C_b(u+\tilde n_1,u+\tilde n_2)\rangle=C_b(u,u)$: the model has no noise term and no noise bias. The spectra are those of the E and B maps, so that EE and BB are constrained separately, and come with their gradient from the differentiable \texttt{anafast} of STL-Dev-MPI.
 
-\paragraph{Conditioning on the dust intensity.} The network can only infer the local signal-to-noise ratio from $d$, and removes almost nothing where the dust is bright (Sect.~\ref{sec:real}). We give it $\log I_{857}$, standardised, as an additional input, concatenated to the input and, averaged down the pyramid, to the input of every decoder level, so that the decoding depends on the local dust intensity. Since the 857\,GHz map is also the template of $L_3$, the residual $d-u$ must be checked to remain uncorrelated with it.
+\paragraph{Conditioning.} The network can only infer the local signal-to-noise ratio from $d$. We give it two further maps, standardised: $\log I_{857}$, the dust intensity, and the log of the local noise rms, $\tfrac12\log\langle(n_Q^2+n_U^2)/2\rangle$ over the training simulations, set by the scanning strategy. They are concatenated to the input and, averaged down the pyramid, to the input of every decoder level. Since the 857\,GHz map is also the template of $L_3$, the residual $d-u$ must be checked to remain uncorrelated with it.
 
-\paragraph{Statistics of the E and B maps.} $Q$ and $U$ are defined in a frame on the sphere, and their scattering statistics taken separately depend on it, whereas the statistics of the dust do not. FOSCAT \citep{foscat} computes spin-2 statistics with wavelets built from spin-2 harmonics, which give the wavelet coefficients of the E and B maps directly from $(Q,U)$; on the full sky, this is the scalar scattering of the E and B maps. We therefore compute, optionally, every term on $(E,B)=\mathcal{T}(Q,U)$, where $\mathcal{T}$ is the spin-2 analysis of $(Q,U)$ followed by the scalar synthesis of $a^E_{\ell m}$ and $a^B_{\ell m}$ ($\ell\le3\nside-1$). The network still maps $(Q,U)$ to $(Q,U)$ (a joint network), and $\mathcal{T}$ is applied to its output, with the gradient through it, and once to the observations and to every noise simulation. $\mathcal{T}$ is linear: a noise on $(Q,U)$ is a noise on $(E,B)$, and Table~\ref{tab:bias} holds unchanged. The spectrum loss is then on the spectra of the E and B maps, i.e. on EE and BB separately.
+\subsection{Per-map reference}\label{sec:lbfgs}
 
-\paragraph{Conditioning on the noise level.} The scanning strategy sets the local noise level, which the network has to infer from $d$ alone. We can give it, as a further conditioning map, the log of the local noise rms, $\tfrac12\log\langle(n_Q^2+n_U^2)/2\rangle$ over the training simulations, standardised.
+The amortised denoiser is compared with the method it replaces: the same loss minimised over the pixels of $u$, for one observation, without a network. We start from $u=d$ and use the native L-BFGS of STL-Dev-MPI (strong-Wolfe line search) on $u/{\rm std}(d)$. The objective is the sum, over $Q$ and $U$, of exactly the weighted loss terms of the network run, computed by the same code. The noise realisations are drawn from the training simulations; they are fixed within a round of 50 iterations, so that the loss is deterministic for the line search, and redrawn between the ten rounds, the biases being re-estimated at the start of every round.
 
-\subsection{Data and protocol}
+\section{Data and reference training}\label{sec:data}
 
-The sky is the \textit{Planck} PR3 353\,GHz full-mission polarisation map \citep[PSB detectors;][]{planck2020hfi}, in $\mu{\rm K}_{\rm CMB}$, degraded to $\nside=64$ by NESTED parent means. Its $Q$ and $U$ maps have standard deviations of 247 and 126\,$\mu$K. We consider two noise models, both white:
-\begin{itemize}
-  \item \emph{uniform}: $\sigma=0.5\,{\rm std}(Q)=123.5\,\mu$K in every pixel;
-  \item \emph{PR3}: $\sigma(p)$ is the per-pixel standard deviation of ten FFP10 noise simulations of the same map \citep{planck2020hfi}, degraded to $\nside=64$ \emph{before} taking the standard deviation, so that the large-scale correlations of the PR3 noise set the level of a degraded pixel; its rms is 9.0 ($Q$) and 9.6\,$\mu$K ($U$). We also use $4\,\sigma(p)$.
-\end{itemize}
-Every training step draws an observation $d=Q+n_0$ of the training sky, evaluates $u=f_\theta(d)$, draws $B=4$ realisations $n_i$ and takes one Adam step on Eq.~\eqref{eq:loss}, with a cosine learning-rate schedule from $10^{-3}$ over 3000 steps (0.18\,s per step on one NVIDIA T4, 0.5\,s with two runs sharing the device). The network is amortised over noise realisations only: it sees a single sky. Its evaluation uses fixed noise realisations of $Q$ (training sky) and of $U$ (test sky, never seen) and compares $u$ with the clean sky, which training never sees: pixel rms error relative to the noise rms, rms over every family of $(\Phi_c(u)-\Phi_c(s))/\sigma_c(s)$, and the variance of the four-children details at every pyramid level.
+The observations are the \textit{Planck} PR3 353\,GHz full-mission polarisation maps \citep[PSB detectors;][]{planck2020hfi} $d$, and the two half-mission maps $d_1$ and $d_2$, of $Q$ and $U$, in $\mu{\rm K}_{\rm CMB}$, degraded to $\nside=256$ by NESTED parent means. The FFP10 noise simulations of the same maps provide the noise draws: simulations 10--49 for the training and the bias estimates, 0--9 for the evaluation. Their rms is 31.6 ($Q$) and 32.8\,$\mu$K ($U$), and they carry the stripes and large-scale correlations of the PR3 noise. There is no clean sky to compare with. We check instead that what is removed, $d-u$, has the level and the spectrum of the noise, and that the spectrum of $u$ follows the half-mission cross spectrum $d_1\times d_2$, which has no noise bias.
 
-\section{Results}
+The reference training minimises $\mathcal{L}=\mathcal{L}_{\rm data}+L_1+L_2+L_3+L_{\rm cl}$ on the E and B maps of the output (Sect.~\ref{sec:eb}), with the scattering coefficients averaged under the four galactic masks, the biases live for 200 steps and then frozen, and the conditioning on $\log I_{857}$ and on the noise level. It runs 3000 Adam steps with a cosine learning-rate schedule from $10^{-3}$, every step training $Q$ and $U$ together, in the native implementation of Sect.~\ref{sec:native}: 3.6\,s per step and 3\,h\,02\,min on one NVIDIA A100. Section~\ref{sec:history} gives the alternatives to each of these choices.
 
-\begin{table*}
-  \caption{Final evaluation (3000 steps). Sphere convolutions except the last run (face images). $\sigma_n$: noise rms; err./$\sigma_n$: pixel rms of $u-s$ over the noise rms. Edge: ratio of the rms of the finest-level details of $u-s$ along the base-face edges to their rms elsewhere. Data loss: Eq.~\eqref{eq:loss} for $u$, in brackets for $u=d$ (no denoising). $S_n$: rms of $(\Phi(u)-\Phi(s))/\sigma$ over the family, in brackets the same for $d$.}
-  \label{tab:results}
-  \centering
-  \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  \begin{tabular}{llcccccccc}
-    \hline\hline
-    Run & Sky & $\sigma_n$ [$\mu$K] & err./$\sigma_n$ & edge & data loss & $S_1$ & $S_2$ & $S_3$ & $S_4$ \\
-    \hline
-    \csname @@input\endcsname figures/results_table.tex % primitive input: expandable inside the tabular
-    \hline
-  \end{tabular}
-\end{table*}
+\section{Results}\label{sec:results}
 
 \begin{figure*}
   \centering
-  \figfile{maps_uniform.pdf}{\textwidth}
-  \caption{Uniform white noise ($\sigma=123.5\,\mu$K). Top: training sky $Q$; bottom: test sky $U$. From left to right: clean sky, observation, network output, noise $d-s$ and error $u-s$ (the last two on the same scale).}
-  \label{fig:maps_uniform}
-\end{figure*}
-
-\begin{figure*}
-  \centering
-  \figfile{maps_pr3x4.pdf}{\textwidth}
-  \caption{Same as Fig.~\ref{fig:maps_uniform} for white noise with four times the per-pixel level of the PR3 simulations.}
-  \label{fig:maps_pr3}
-\end{figure*}
-
-\begin{figure*}
-  \centering
-  \figfile{stats.pdf}{\textwidth}
-  \caption{Distance of the statistics to those of the clean sky, per family: rms of $(\Phi_c-\Phi_c(s))/\sigma_c(s)$ for $u$ (bars, one per run) and for the observation $d$ (black ticks, centred on the bar with the same noise model; the two uniform runs share theirs). Left: training sky $Q$; right: test sky $U$.}
-  \label{fig:stats}
-\end{figure*}
-
-\begin{figure*}
-  \centering
-  \figfile{levels.pdf}{\textwidth}
-  \caption{Variance of the four-children details of every pyramid level relative to the clean sky, for $u$ (solid) and $d$ (dotted); the abscissa is the $\nside$ of the children.}
-  \label{fig:levels}
-\end{figure*}
-
-\begin{figure}
-  \centering
-  \figfile{loss.pdf}{\columnwidth}
-  \caption{Training loss, Eq.~\eqref{eq:loss}, relative to its initial value (identity network).}
-  \label{fig:loss}
-\end{figure}
-
-\begin{figure*}
-  \centering
-  \figfile{artefacts.pdf}{0.85\textwidth}
-  \caption{Error $u-s$ with uniform noise for the three convolutions: planar convolutions on the base-face images (left), sphere stencil in the $\phi$ gauge (centre) and in the cosmo gauge (right). Top: training sky $Q$; bottom: test sky $U$; same scale in every row (half the 99th percentile of the noise). The edge ratio is that of Table~\ref{tab:results}.}
-  \label{fig:artefacts}
-\end{figure*}
-
-Table~\ref{tab:results} and Figs.~\ref{fig:maps_uniform}--\ref{fig:artefacts} summarise the runs. Unless stated otherwise, the network uses the sphere convolutions in the $\phi$ gauge.
-
-\paragraph{Training sky.} With uniform noise the loss decreases by more than two orders of magnitude (Fig.~\ref{fig:loss}), and the statistics of $u$ reach those of the clean sky to within about one ergodic standard deviation for every family, while those of $d$ are off by 8.6 ($\Phi$ variance), 54 ($S_1$) and 10 ($S_2$) standard deviations (Fig.~\ref{fig:stats}, left). This agreement is obtained without any clean pixel in the loss. The pixel error falls to 0.42 times the noise, and the detail variance of $u$ is within 7\% of that of the sky at every level, where $d$ has three times too much at $\nside=64$ (Fig.~\ref{fig:levels}).
-
-\paragraph{Test sky.} On $U$, which the network never saw, the variance, $S_1$, $S_2$ and $S_4$ are closer to the sky with $u$ than with $d$: $S_1$ goes from 83 to 28 standard deviations, $S_2$ from 15 to 3.1, the variance from 18 to 3.9, and the pixel error falls to 0.57 times the noise. $S_3$ gets worse (0.58 to 0.75). The data loss stays at 1.2, against 0.04 on $Q$, and the finest level keeps 1.8 times the detail variance of the sky (Fig.~\ref{fig:levels}, right): the network has learned a denoiser for $Q$ rather than for any dust map. Two causes add up. The network is amortised over noise realisations of a single sky. And the uniform noise, set to half the standard deviation of $Q$, is about one standard deviation of $U$: the test is at a signal-to-noise ratio the network never saw.
-
-\paragraph{PR3 noise level.} At $\nside=64$ the PR3 noise (rms 9\,$\mu$K) is small against the dust (247\,$\mu$K for $Q$): the statistics of $d$ are already within 1.5 standard deviations of the sky, and there is little to denoise. The network still reduces the $S_1$ distance from 0.84 to 0.03 on $Q$ and from 1.5 to 1.2 on $U$, and leaves the other families at or below their level for $d$; the pixel error stays at 0.96--1.00 of the noise, as expected when the noise dominates the error only in the faint regions. With four times the PR3 level, the noise matters at high latitudes (Fig.~\ref{fig:maps_pr3}): on $Q$, $S_1$ goes from 8.8 to 0.27 and the pixel error falls to 0.78; on $U$, $S_1$ goes from 15 to 8.9 and the pixel error to 0.91. The non-uniform level is handled without change to the method: $\sigma(p)$ only enters the draws of $n_0$ and $n_i$.
-
-\paragraph{Artefacts and convolutions.}\label{sec:artefacts} With planar convolutions on the base-face images, the error maps show thin lines along the edges of the twelve faces (Fig.~\ref{fig:artefacts}, left): the finest-level details of $u-s$ are 1.36 ($Q$) and 1.16 ($U$) times larger along the edges than elsewhere. With the sphere stencil the lines disappear and the ratio is 0.99--1.04 in both gauges; the error maps no longer show the HEALPix faces, and the cosmo gauge shows no seam at the equator where its orientation flips. On the statistics the three convolutions are equivalent on the training sky. On the test sky the sphere stencil is slightly worse than the face images with this single-sky training (pixel error 0.57 against 0.55 with uniform noise, 0.91 against 0.84 with $4\,\sigma(p)$), and the cosmo gauge is slightly better than the $\phi$ gauge on $S_1$ and $S_2$ (25 and 2.3 standard deviations against 28 and 3.1) but worse on $S_3$ (0.98 against 0.75). We do not read these differences of generalisation, obtained with one training sky and one seed, as significant. The edge ratio is 0.89--0.97 for the PR3 runs, whose error follows the non-uniform noise level; we have not traced the origin of this small deficit.
-
-\section{Higher resolution and realistic noise}\label{sec:n256}
-
-\paragraph{Setting.} We move to $\nside=256$ with draws of the FFP10 noise simulations themselves instead of white noise: every training step adds to the sky one of the simulations 10--49 of the full-mission map, and the evaluation uses simulations 0--9. Their rms is 31.6 ($Q$) and 32.8\,$\mu$K ($U$) at this resolution, and they carry the stripes and large-scale correlations of the PR3 noise. The two half-mission simulations of the same realisation give the half-mission observations $d_1$ and $d_2$. The full-sky network has six levels ($\nside=256$ to 8, $2.4\times10^6$ parameters), the statistics $J=7$ scales (5882 coefficients), and a step takes 1\,s (auto loss) to 2.8\,s (cross losses) on one NVIDIA A100.
-
-\paragraph{Losses of \citet{delouis2022}.} Besides the auto loss of Eq.~\eqref{eq:loss}, we use the three cross-statistics terms of \citet{delouis2022}, each a reduced $\chi^2$ of the same form, with $\tilde n$ fresh noise draws and $T$ the \textit{Planck} 857\,GHz intensity map as dust template:
-\begin{align}
-  L_1&:\ \Phi(d_1,d_2)\ \text{vs}\ \langle\Phi(u+\tilde n_1,u+\tilde n_2)\rangle, \\
-  L_2&:\ \Phi(d,u)\ \text{vs}\ \langle\Phi(u+\tilde n,u)\rangle, \\
-  L_3&:\ \Phi(T,d)\ \text{vs}\ \langle\Phi(T,u+\tilde n)\rangle,
-\end{align}
-where $\Phi(a,b)$ are the cross scattering covariances of STL-Dev-MPI, computed on the GPU. The cross statistics of the engine have no mean or variance coefficient: they constrain $S_1$ to $S_4$ only.
-
-\paragraph{Training on discs.} The cost of full-sky statistics grows with $\nside^2$. As an alternative, we train on disc patches: every step draws 16 centres among the pixel centres of $\nside=8$, takes all pixels within $10^\circ$ of each centre, runs the network on the discs (three levels, 32, 64 and 96 channels, $3.7\times10^5$ parameters; the stencil of every level is bound to the pixels of the disc) and computes the three cross losses on the discs with $J=4$, averaged within $4^\circ$ of the centre, where the network on the disc equals the network on the full sky. This run used the CPU implementation of the disc statistics (3.3\,s per step on 32 cores). The native U-Net of Sect.~\ref{sec:native}, which fits the full sky at $\nside=256$ in 8.6\,GB, is the other route to higher resolution: the discs remain useful when the full sky no longer fits on one GPU.
-
-\begin{table*}
-  \caption{Evaluation at $\nside=256$ with FFP10 noise (3000 steps). err./$\sigma_n$: pixel rms of $u-s$ over the noise rms. Other columns: rms of $(\Phi(u)-\Phi(s))/\sigma$ over the family, in brackets the same for $d$; the statistics of the evaluation have $J=7$ for the full-sky runs and $J=4$ for the patch run, hence the different values for $d$.}
-  \label{tab:n256}
-  \centering
-  \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  \begin{tabular}{llccccccc}
-    \hline\hline
-    Run & Sky & err./$\sigma_n$ & mean & var & $S_1$ & $S_2$ & $S_3$ & $S_4$ \\
-    \hline
-    \csname @@input\endcsname figures/results256_table.tex
-    \hline
-  \end{tabular}
-\end{table*}
-
-\begin{figure*}
-  \centering
-  \figfile{maps256.pdf}{\textwidth}
-  \caption{$\nside=256$, FFP10 noise. Top: training sky $Q$; bottom: test sky $U$. From left to right: clean sky, noise $d-s$, and error $u-s$ of the full-sky run with the auto loss and of the patch run with the cross losses (same scale as the noise).}
-  \label{fig:maps256}
-\end{figure*}
-
-\begin{figure*}
-  \centering
-  \figfile{evol256.pdf}{\textwidth}
-  \caption{Evaluation during training at $\nside=256$: pixel error over the noise, and distance of the mean and of $S_1$ of $u$ to the clean sky in ergodic standard deviations (dotted: $d$).}
-  \label{fig:evol256}
-\end{figure*}
-
-\paragraph{Results.} Table~\ref{tab:n256} and Figs.~\ref{fig:maps256}--\ref{fig:evol256} give the results. With the auto loss alone, the $S_1$ distance falls from 25 to 0.94 standard deviations on $Q$ and from 27 to 2.0 on the test sky $U$, and the other families are at or below their level for $d$; the pixel error is 1.09 ($Q$) and 0.93 ($U$) of the noise, so the statistics are corrected without a gain in pixel error at this signal-to-noise ratio. The cross losses reach a similar $S_1$ on $Q$ (1.0) but a worse one on $U$ (6.1), and the mean of $u$ drifts away from that of the sky, to about 60 standard deviations, and the pixel error rises above the noise (1.17 on $Q$): the mean is not constrained by the cross statistics, and the network uses this freedom. On discs the drift is smaller (7 standard deviations) but $S_1$ only reaches 11--12, the pixel error is 1.22--1.23, and the error map shows a stripe along the Galactic plane (Fig.~\ref{fig:maps256}, right): with $J=4$ on $10^\circ$ discs neither the large scales nor the bright plane are constrained enough. The next runs add an auto term on the mean and variance to the cross losses.
-
-\section{Denoising the PR3 maps}\label{sec:real}
-
-In the mock tests of Sects.~3 and \ref{sec:n256} the ``clean'' sky is the PR3 map itself, which contains the \textit{Planck} noise: the network then learns to reproduce the statistics of a noisy sky, and its maps cannot be clean. The actual test is the one of \citet{delouis2022}: the observations are the PR3 maps themselves. $d$ is the full-mission map and $d_1,d_2$ the half-mission maps of $Q$ and $U$ at $\nside=256$, and the FFP10 simulations only provide the realisations $\tilde n$. The network is trained on both fields, alternately, with the auto loss (which constrains the mean and variance), the three cross losses and the spectrum loss, $\mathcal{L}=\mathcal{L}_{\rm data}+L_1+L_2+L_3+L_{\rm cl}$, and is conditioned on the 857\,GHz map (Sect.~\ref{sec:variants}). We show two runs of 3000 Adam steps. In the first, the noise biases are not frozen (3.6\,s per step on an A100). In the second, they are frozen, estimated only for the biased coefficients of Table~\ref{tab:bias} with 40 realisations every 50 steps, and every scattering coefficient is averaged under the galactic masks $|b|>0^\circ$, $20^\circ$, $30^\circ$ and $45^\circ$ (4.3\,s per step). There is no clean sky to compare with. We check instead that what is removed, $d-u$, has the level and the spectrum of the noise, and that the spectrum of $u$ follows the half-mission cross spectrum $d_1\times d_2$, which has no noise bias.
-
-\begin{figure*}
-  \centering
-  \figfile{cl857_bicep.pdf}{\textwidth}
-  \figfile{fzmk_bicep.pdf}{\textwidth}
-  \caption{The PR3 maps denoised by the network, in the BICEP2 field (gnomonic projection, $32^\circ$ wide, centred on $l=316^\circ$, $b=-58.5^\circ$), $\nside=256$. Top two rows: noise biases not frozen; bottom two rows: frozen biases and masked statistics; in each, $Q$ then $U$. From left to right: the PR3 full-mission map $d$, the denoised map $u$ (histogram-equalised colours), the removed part $d-u$ and the half-mission difference $(d_1-d_2)/2$, an estimate of the noise (same linear scale for the last two).}
+  \figfile{ref_bicep.pdf}{\textwidth}
+  \caption{The PR3 maps denoised by the reference network, in the BICEP2 field (gnomonic projection, $32^\circ$ wide, centred on $l=316^\circ$, $b=-58.5^\circ$), $\nside=256$; top $Q$, bottom $U$. From left to right: the PR3 full-mission map $d$, the denoised map $u$ (histogram-equalised colours), the removed part $d-u$ and the half-mission difference $(d_1-d_2)/2$, an estimate of the noise (same linear scale for the last two).}
   \label{fig:real_bicep}
 \end{figure*}
 
 \begin{figure*}
   \centering
-  \figfile{cl857_maps.pdf}{\textwidth}
-  \figfile{fzmk_maps.pdf}{\textwidth}
-  \caption{Full sky. Top two rows: noise biases not frozen; bottom two rows: frozen biases and masked statistics; in each, $Q$ then $U$. From left to right: the PR3 map $d$, the denoised map $u$ (histogram-equalised colours) and the removed part $d-u$ (linear scale).}
+  \figfile{ref_maps.pdf}{\textwidth}
+  \caption{Full sky, reference network; top $Q$, bottom $U$. From left to right: the PR3 map $d$, the denoised map $u$ (histogram-equalised colours) and the removed part $d-u$ (linear scale).}
   \label{fig:real_maps}
 \end{figure*}
 
 \begin{figure*}
   \centering
-  \figfile{cl857_spectra.pdf}{0.8\textwidth}
-  \figfile{fzmk_spectra.pdf}{0.8\textwidth}
-  \caption{EE (left) and BB (right) pseudo-spectra over $|b|>30^\circ$ (mask apodised by a $5^\circ$ Gaussian) of the PR3 map $d$, of its half-mission cross spectrum $d_1\times d_2$ (no noise bias), of the denoised map $u$, of the removed part $d-u$, of the half-mission difference and of the mean of ten FFP10 noise simulations. Top: noise biases not frozen; bottom: frozen biases and masked statistics.}
+  \figfile{ref_spectra.pdf}{0.8\textwidth}
+  \caption{EE (left) and BB (right) pseudo-spectra over $|b|>30^\circ$ (mask apodised by a $5^\circ$ Gaussian) of the PR3 map $d$, of its half-mission cross spectrum $d_1\times d_2$ (no noise bias), of the denoised map $u$ of the reference network, of the removed part $d-u$, of the half-mission difference and of the mean of ten FFP10 noise simulations.}
   \label{fig:real_spectra}
 \end{figure*}
 
-\paragraph{Maps.} In the BICEP2 field (Fig.~\ref{fig:real_bicep}), where the dust and the noise have comparable amplitudes at this resolution, the denoised maps of both runs show the dust structures that the noise hides in $d$, and the removed part $d-u$ looks like the half-mission difference. With frozen biases and masks, $u$ is smoother at the smallest scales. The rms of $d-u$ over the full sky is 0.83 ($Q$) and 0.75 ($U$) times the rms of the FFP10 noise with biases not frozen, and 0.84 and 0.81 with frozen biases and masks. The difference comes from the faint sky: in the three quarters of the sky where the 857\,GHz intensity is lowest, $d-u$ has 0.80--1.01 times the rms of the noise without frozen biases and 0.88--1.00 with them. On the full sky (Fig.~\ref{fig:real_maps}), $d-u$ is close to zero in the Galactic plane and in the bright regions, where the dust dominates the noise: the network removes almost nothing there, since a noise much smaller than the signal hardly changes the statistics the loss constrains. The mean of $u$ stays within 0.12 ergodic standard deviations of that of $d$ without frozen biases, and within 0.8 with them: the auto term removes the drift of the mean seen with the cross losses alone (Sect.~\ref{sec:n256}).
-
-\paragraph{Spectra.} Over $|b|>30^\circ$ (Fig.~\ref{fig:real_spectra}, Table~\ref{tab:real}), the spectra of $u$ equal the noise-free cross spectrum $d_1\times d_2$ to within 1\% (EE) and 3\% (BB) for $30\le\ell<60$ in both runs. For $100\le\ell<200$, where $d$ is 36\% (EE) and 53\% (BB) above the cross spectrum, $u$ is 8--9\% below it in EE. At smaller scales, where $d$ is 2 to 7 times above, $u$ reaches 82--85\% of the EE cross spectrum for $200\le\ell<450$. BB, in turn, exceeds the cross spectrum by 12--14\% for $100\le\ell<200$ and by 25--28\% beyond $\ell=200$. $L_{\rm cl}$ constrains the spectra of $Q$ and of $U$, which measure EE and BB together: it fixes the total power at small scales, but not how it is shared between E and B, and the network leaves too much of it in B. A joint $(Q,U)$ network, which constrains the EE and BB cross spectra separately, removes this excess (below). The spectrum of $d-u$ is within 10\% of the noise spectrum for $200\le\ell<450$ in EE with frozen biases and masks, and 27--36\% above it without: there, the run without frozen biases removes part of the dust with the noise. At $\ell<60$, where the dust dominates by two orders of magnitude, $d-u$ is 29\% (biases not frozen) and 36\% (frozen) below the noise.
-
-\paragraph{Without the spectrum loss.} The same network trained without $L_{\rm cl}$ and without conditioning, with the biases not frozen (Table~\ref{tab:real}), follows the cross spectrum as closely up to $\ell=200$ (to 6\% in EE and 1\% in BB), but loses power beyond: $u$ reaches only 64\% (EE) and 85\% (BB) of it for $200\le\ell<300$, and 54\% and 90\% for $300\le\ell<450$. Its removed rms is 0.80 ($Q$) and 0.74 ($U$) times the noise. The spectrum loss thus removes most of the EE deficit at small scales, at the price of the BB excess above.
-
-\begin{figure*}
-  \centering
-  \figfile{lbfgs_bicep.pdf}{\textwidth}
-  \figfile{lbfgs_spectra.pdf}{0.8\textwidth}
-  \caption{Same layout as Figs.~\ref{fig:real_bicep} and \ref{fig:real_spectra} for the per-map reference: the loss $\mathcal{L}_{\rm data}+L_1+L_2+L_3$, without $L_{\rm cl}$, minimised over the pixels of $u$ by L-BFGS, without a network (Sect.~\ref{sec:lbfgs}; 10 rounds of 50 iterations, noise biases not frozen).}
-  \label{fig:lbfgs}
-\end{figure*}
-
-\paragraph{Per-map reference.} We first compare the network and the per-map L-BFGS reference with the loss without $L_{\rm cl}$. Minimised directly over the pixels of $u$ by L-BFGS (Sect.~\ref{sec:lbfgs}; 10 rounds of 50 iterations, 6\,min per round on an A100), the loss reaches a similar final value as the network, and a similar level of removed noise: the rms of $d-u$ is 0.98 ($Q$) and 0.73 ($U$) times that of the noise. The maps of the BICEP2 field look much the same (Fig.~\ref{fig:lbfgs}). The spectra differ in two ways. At large scales, $10\lesssim\ell\lesssim100$, the L-BFGS solution changes the map well above the noise: the spectrum of $d-u$ is 3 to 10 times that of the noise, and for $30\le\ell<60$ the EE spectrum of $u$ is 8\% below the cross spectrum and BB 9\% above, where the network is within 1\%. The statistics of the loss do not fix the configuration of the large scales, which the per-pixel optimiser is free to change, while the network, which predicts a correction of $d$ from its local features, leaves them in place. At small scales the two behave alike: for $200\le\ell<300$, $u$ reaches 54\% (EE) and 85\% (BB) of the cross spectrum with L-BFGS, against 64\% and 85\% with the network. The amortised network is therefore not worse than the per-map minimisation of the same loss, and better at large scales; the deficit of power at small scales comes from the loss, not from the amortisation.
-
-\begin{figure}
-  \centering
-  \figfile{lcl_spectra.pdf}{\columnwidth}
-  \figfile{lfzcl_spectra.pdf}{\columnwidth}
-  \caption{Same as Fig.~\ref{fig:real_spectra} for the per-map L-BFGS reference with the spectrum loss $L_{\rm cl}$. Top: noise biases not frozen. Bottom: frozen biases, and a further mask $|b|>60^\circ$ in $L_{\rm cl}$.}
-  \label{fig:lbfgscl}
-\end{figure}
-
-\paragraph{Per-map reference with the spectrum loss.} With $L_{\rm cl}$ added (10 rounds of 50 iterations, 6.2\,min per round), the per-map solution no longer changes the large scales: for $30\le\ell<60$ the spectrum of $d-u$ is 0.12 times that of the noise, against 3.2 without $L_{\rm cl}$, and $u$ follows the cross spectrum to 2\% in EE and 1\% in BB (Table~\ref{tab:real}, Fig.~\ref{fig:lbfgscl}). At small scales it gives the same spectra as the network trained with the same loss: $u$ reaches 82--85\% of the EE cross spectrum for $200\le\ell<450$, and BB exceeds it by 21--31\%. The excess of BB is therefore a property of the loss, which constrains the spectra of $Q$ and $U$ and not EE and BB separately, and not of the network. The spectrum of $d-u$ is 1.3--1.5 times the noise for $200\le\ell<450$, so that the per-map solution, too, removes part of the dust with the noise there. Its removed rms is lower than the network's (0.67 and 0.63 times the noise for $Q$ and $U$, against 0.83 and 0.75), in part because it leaves the large scales of $d$ in place.
-
-With frozen biases, and the mask $|b|>60^\circ$ added to $L_{\rm cl}$ (6.9\,min per round), the spectra over $|b|>30^\circ$ hardly change (Table~\ref{tab:real}, Fig.~\ref{fig:lbfgscl}, bottom): $u$ follows the cross spectrum to 1\% (EE) and 0\% (BB) for $30\le\ell<60$, reaches 84--87\% of the EE cross spectrum for $200\le\ell<450$, and BB exceeds it by 18--27\%. The frozen biases therefore do not cause the loss of power at small scales when the spectrum loss is present, unlike without it (below). The removed rms is 0.65 ($Q$) and 0.61 ($U$) times the noise, and the large scales stay in place: for $30\le\ell<60$ the spectrum of $d-u$ is 0.07 times that of the noise. The further mask acts where it is meant to. Over $|b|>60^\circ$, for $100\le\ell<200$, $u$ is 0.89 (EE) and 1.24 (BB) times the cross spectrum, against 1.20 and 1.64 without frozen biases and without this mask; for $200\le\ell<300$, 0.82 and 1.29 against 1.13 and 1.92. Since the biases and the mask change together, this comparison does not separate their effects.
-
 \begin{table*}
-  \caption{Denoising of the PR3 maps at $\nside=256$. First fourteen rows after the data: the loss $\mathcal{L}_{\rm data}+L_1+L_2+L_3+L_{\rm cl}$, for the network conditioned on the 857\,GHz map and for the per-map L-BFGS reference (masks: statistics averaged under the galactic masks of Sect.~\ref{sec:variants}). Last rows: the loss without $L_{\rm cl}$, for the network without conditioning and for the per-map L-BFGS reference. Frozen biases are estimated only for the coefficients with a noise bias (Table~\ref{tab:bias}). $\sigma_{d-u}/\sigma_n$: rms of the removed part over that of the FFP10 noise ($Q$, $U$). $u/(d_1\times d_2)$: EE and BB spectra of $u$ over the half-mission cross spectrum, over $|b|>30^\circ$, in four multipole ranges (1 for a perfect denoising); $d$ gives the same ratio for the data. $(d-u)/n$: EE spectrum of the removed part over the FFP10 noise spectrum.}
+  \caption{Denoising of the PR3 maps at $\nside=256$: the reference network and the closest alternatives (Sect.~\ref{sec:history}). All rows use the loss $\mathcal{L}_{\rm data}+L_1+L_2+L_3+L_{\rm cl}$, and the networks are conditioned on the 857\,GHz map. $\sigma_{d-u}/\sigma_n$: rms of the removed part over that of the FFP10 noise ($Q$, $U$). $u/(d_1\times d_2)$: EE / BB spectra of $u$ over the half-mission cross spectrum in four multipole ranges, $30\le\ell<60$, $100\le\ell<200$, $200\le\ell<300$ and $300\le\ell<450$ (1 for a perfect denoising), over $|b|>30^\circ$ and over $|b|>60^\circ$; $d$ gives the same ratio for the data. $(d-u)/n$: EE spectrum of the removed part over the FFP10 noise spectrum for $30\le\ell<60$, over $|b|>30^\circ$.}
   \label{tab:real}
   \centering
-  \footnotesize
-  \begin{tabular}{lcccccc}
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabular}{p{4.2cm}cccccccccc}
     \hline\hline
-    & $\sigma_{d-u}/\sigma_n$ & \multicolumn{4}{c}{$u/(d_1\times d_2)$, EE / BB} & $(d-u)/n$ EE \\
-    & $Q$, $U$ & $30\le\ell<60$ & $100\le\ell<200$ & $200\le\ell<300$ & $300\le\ell<450$ & $30\le\ell<60$ \\
+    & $\sigma_{d-u}/\sigma_n$ & \multicolumn{4}{c}{$u/(d_1\times d_2)$, $|b|>30^\circ$} & \multicolumn{4}{c}{$u/(d_1\times d_2)$, $|b|>60^\circ$} & $(d-u)/n$ \\
+    & $Q$, $U$ & 30--60 & 100--200 & 200--300 & 300--450 & 30--60 & 100--200 & 200--300 & 300--450 & 30--60 \\
     \hline
-    data $d$ & -- & 1.02 / 1.04 & 1.36 / 1.53 & 2.13 / 3.06 & 4.25 / 6.67 & -- \\
-    network, biases not frozen & 0.83, 0.75 & 0.99 / 1.03 & 0.91 / 1.14 & 0.85 / 1.27 & 0.85 / 1.28 & 0.71 \\
-    network, frozen biases, masks & 0.84, 0.81 & 0.99 / 1.03 & 0.92 / 1.12 & 0.85 / 1.25 & 0.82 / 1.26 & 0.64 \\
-    network, frozen biases, $|b|>60^\circ$ in $L_{\rm cl}$ & 0.86, 0.81 & 0.99 / 1.03 & 0.91 / 1.14 & 0.85 / 1.27 & 0.84 / 1.29 & 0.56 \\
-    joint $(Q,U)$ network, EE/BB in $L_{\rm cl}$, biases not frozen & 0.79, 0.77 & 1.00 / 1.00 & 1.00 / 1.00 & 1.00 / 0.99 & 1.00 / 0.98 & 0.38 \\
-    joint $(Q,U)$ network, statistics on E and B, frozen biases, masks, 1000 steps & 0.77, 0.73 & 0.98 / 1.00 & 1.00 / 0.99 & 0.97 / 1.00 & 0.93 / 0.95 & 0.76 \\
-    the same, 16--64 channels per level & 0.69, 0.73 & 0.97 / 1.00 & 0.99 / 0.99 & 0.96 / 0.98 & 0.92 / 0.92 & 0.68 \\
-    the same, 16--64 channels per level, 3000 steps & 0.80, 0.77 & 0.99 / 0.99 & 0.99 / 1.00 & 0.99 / 0.99 & 0.94 / 0.95 & 0.79 \\
-    native joint network (Rust), statistics on $\bar\eth^2(Q+iU)$, 3000 steps & 0.88, 0.84 & 0.99 / 0.99 & 1.00 / 1.00 & 0.99 / 1.01 & 0.98 / 0.96 & 1.51 \\
-    native joint network (Rust), statistics on E and B, 3000 steps & 0.70, 0.70 & 1.02 / 1.02 & 1.00 / 0.99 & 0.98 / 1.00 & 0.96 / 0.95 & 0.73 \\
-    the same, 16--64 channels per level & 0.70, 0.71 & 1.00 / 0.99 & 1.00 / 1.00 & 0.98 / 0.98 & 0.94 / 0.96 & 0.69 \\
-    the same, network on $(Q,U)$, statistics on E and B of $u$ & 0.81, 0.75 & 0.99 / 1.00 & 1.00 / 1.00 & 0.99 / 0.99 & 0.96 / 0.95 & 0.71 \\
-    L-BFGS, statistics on E and B, frozen biases, masks & 0.75, 0.50 & 1.00 / 1.00 & 1.01 / 1.01 & 0.97 / 0.97 & 0.98 / 0.96 & 0.68 \\
-    L-BFGS, biases not frozen & 0.67, 0.63 & 0.98 / 0.99 & 0.94 / 1.11 & 0.85 / 1.21 & 0.82 / 1.31 & 0.12 \\
-    L-BFGS, frozen biases, $|b|>60^\circ$ in $L_{\rm cl}$ & 0.65, 0.61 & 0.99 / 1.00 & 0.94 / 1.11 & 0.87 / 1.18 & 0.84 / 1.27 & 0.07 \\
-    \hline
-    \multicolumn{7}{l}{without $L_{\rm cl}$:} \\
-    network, biases not frozen & 0.80, 0.74 & 0.99 / 1.00 & 0.94 / 1.01 & 0.64 / 0.85 & 0.54 / 0.90 & 0.71 \\
-    network, frozen biases & 0.86, 0.77 & 0.98 / 1.00 & 0.89 / 1.03 & 0.67 / 0.92 & 0.52 / 0.73 & 0.56 \\
-    native network (Rust), frozen biases & 0.88, 0.76 & 0.95 / 1.01 & 0.87 / 0.97 & 0.50 / 0.68 & 0.53 / 0.77 & 0.77 \\
-    L-BFGS, biases not frozen & 0.98, 0.73 & 0.92 / 1.09 & 0.86 / 1.04 & 0.54 / 0.85 & 0.80 / 1.27 & 3.2 \\
-    L-BFGS, frozen biases, masks & 0.69, 0.64 & 0.98 / 1.00 & 0.98 / 1.10 & 0.52 / 0.72 & 0.57 / 0.89 & 0.63 \\
+    data $d$ & -- & 1.02/1.04 & 1.36/1.53 & 2.13/3.06 & 4.25/6.67 & & & & & -- \\
+    \textbf{reference}: native, $(Q,U)\to(Q,U)$, terms on E, B & 0.81, 0.75 & 0.99/1.00 & 1.00/1.00 & 0.99/0.99 & 0.96/0.95 & 0.94/0.93 & 0.99/0.97 & 0.91/0.91 & 0.89/1.56 & 0.71 \\
+    the same, network on E and B & 0.70, 0.71 & 1.00/0.99 & 1.00/1.00 & 0.98/0.98 & 0.94/0.96 & 0.98/1.01 & 0.99/0.95 & 0.94/0.94 & 0.94/1.57 & 0.69 \\
+    the same in PyTorch & 0.80, 0.77 & 0.99/0.99 & 0.99/1.00 & 0.99/0.99 & 0.94/0.95 & 0.90/0.94 & 1.01/0.97 & 0.93/0.93 & 0.92/1.57 & 0.79 \\
+    per-map L-BFGS, same terms & 0.75, 0.50 & 1.00/1.00 & 1.01/1.01 & 0.97/0.97 & 0.98/0.96 & 0.99/1.02 & 1.02/1.00 & 0.95/0.98 & 0.98/1.38 & 0.68 \\
+    terms on $Q$, $U$, $L_{\rm cl}$ on EE/BB, live biases & 0.79, 0.77 & 1.00/1.00 & 1.00/1.00 & 1.00/0.99 & 1.00/0.98 & 0.97/1.00 & 1.01/0.99 & 0.99/1.02 & 1.00/1.59 & 0.38 \\
     \hline
   \end{tabular}
 \end{table*}
 
-\begin{figure}
-  \centering
-  \figfile{lfzmk_spectra.pdf}{\columnwidth}
-  \caption{Same as Fig.~\ref{fig:lbfgs} (spectra) with the noise biases frozen as in \citet{delouis2022}, estimated only for the coefficients with a noise bias (Table~\ref{tab:bias}), and the statistics averaged under the galactic masks.}
-  \label{fig:lbfgsfz}
-\end{figure}
+\paragraph{Maps.} In the BICEP2 field (Fig.~\ref{fig:real_bicep}), where the dust and the noise have comparable amplitudes at this resolution, the denoised maps show the dust structures that the noise hides in $d$, and the removed part $d-u$ looks like the half-mission difference. On the full sky (Fig.~\ref{fig:real_maps}), $d-u$ is close to zero in the Galactic plane and in the bright regions, where the dust dominates the noise: the network removes almost nothing there, since a noise much smaller than the signal hardly changes the statistics the loss constrains. The rms of $d-u$ over the full sky is 0.81 ($Q$) and 0.75 ($U$) times that of the FFP10 noise. Away from the plane, it is 0.89--0.90 times the noise in every band of latitude from $|b|=20^\circ$ to the poles, against about 0.5 for $|b|<20^\circ$. At evaluation the rms of $u-d$ on the E and B maps is 0.81 times that of the noise.
 
-\paragraph{Frozen noise biases in the per-map reference.} With the biases frozen as in \citet{delouis2022} (Sect.~\ref{sec:variants}; 10 rounds of 50 L-BFGS iterations, the biases re-estimated with 40 realisations at the start of every round) and the statistics averaged under the galactic masks (7\,min per round), the per-map solution without $L_{\rm cl}$ no longer changes the large scales: the spectrum of $d-u$ is 0.63 times the noise for $30\le\ell<60$, against a factor 3 with live biases, and $u$ follows the cross spectrum to 2\% (EE) and 10\% (BB) up to $\ell=200$ (Table~\ref{tab:real}, Fig.~\ref{fig:lbfgsfz}). At small scales it loses power: $u$ reaches 52\% (EE) and 72\% (BB) of the cross spectrum for $200\le\ell<300$. A possible reason is that the frozen bias is estimated at a $u$ that still contains part of the noise, and overestimates the bias of the cleaner map it leads to; the warm-up of Sect.~\ref{sec:variants} tests this. With the spectrum loss added, neither the per-map reference nor the network shows this loss of power.
+\paragraph{Spectra.} Over $|b|>30^\circ$ (Fig.~\ref{fig:real_spectra}, Table~\ref{tab:real}), the EE and BB spectra of $u$ follow the noise-free cross spectrum $d_1\times d_2$ to 1\% up to $\ell=300$, where $d$ is up to 2.1 (EE) and 3.1 (BB) times above it, and are 0.96 (EE) and 0.95 (BB) times it for $300\le\ell<450$, where $d$ is 4 to 7 times above. The EE spectrum of $d-u$ is 0.86, 0.72, 0.84 and 0.94 times that of the FFP10 noise for $10\le\ell<30$, $30\le\ell<60$, $60\le\ell<100$ and $100\le\ell<160$, and 1.02 for $160\le\ell<512$: the network removes the noise at small scales and stays below it at large scales, where the dust is two orders of magnitude above the noise. Over $|b|>60^\circ$, $u$ follows the cross spectrum to 3\% for $100\le\ell<200$, and is 0.94/0.93 (EE/BB) for $30\le\ell<60$, 0.90/0.91 for $10\le\ell<30$ and 0.91 for $200\le\ell<300$. For $300\le\ell<450$, BB is 1.56 times the cross spectrum there, as for every network and for the per-map reference (1.38): this excess, where the cross spectrum of the faintest sky is the least certain, comes from the loss.
 
-\paragraph{Null test of the conditioning.} Since the 857\,GHz map is both an input of the network and the template of $L_3$, the network could imprint it on the residual. The correlation coefficient of $d-u$ with $I_{857}$ is at most 0.012 in absolute value in both runs and for both $Q$ and $U$ (full sky or $|b|>30^\circ$), as without conditioning ($\le0.009$), where noise maps alone scatter by 0.07 because of their large-scale correlations. The conditioning does not make the network remove more noise where the dust is bright: in the quarter of the sky with the highest $I_{857}$, $d-u$ has 0.40--0.50 times the rms of the noise with conditioning, against 0.54--0.70 for the network trained without $L_{\rm cl}$ and conditioning, and about 0.2 in the brightest tenth in all runs.
+\paragraph{Removed part outside the E and B maps.} The loss sees only $\mathcal{T}(u)$. The removed part splits into 0.68 times the noise rms within the E and B maps, $\mathcal{T}^{-1}\mathcal{T}(d-u)$, and 0.31 in $P(d-u)$, out of the 0.47 that $P$ holds in a noise map. A network on the E and B maps returns $u=d-\mathcal{T}^{-1}(\mathcal{T}d-u_{EB})$, passes $P(d)$ unchanged (0.01) and removes 0.70 instead of 0.81 on $Q$, for the same 0.67 within the E and B maps. No term constrains $P(u)$: its removal comes from the network, whose weights are shared with the part the loss sees. It costs a few per cent of the sky at the largest scales of the cleanest regions: over $|b|>60^\circ$, the network on the E and B maps gives 0.96/1.00 and 0.98/1.01 for $10\le\ell<30$ and $30\le\ell<60$, against 0.90/0.91 and 0.94/0.93.
 
-\paragraph{Frozen biases without the spectrum loss.} The network trained with frozen biases (estimated only for the biased coefficients) and the loss $\mathcal{L}_{\rm data}+L_1+L_2+L_3$ removes 0.86 ($Q$) and 0.77 ($U$) times the rms of the noise. It follows the cross spectrum to 2\% up to $\ell=60$ and to 11\% (EE) and 3\% (BB) for $100\le\ell<200$, but loses power beyond, as the per-map reference with frozen biases does: $u$ reaches 67\% (EE) and 92\% (BB) of the cross spectrum for $200\le\ell<300$, and 52\% and 73\% for $300\le\ell<450$ (Table~\ref{tab:real}). The spectrum loss is what removes this deficit.
+\paragraph{Per-map reference.} The same terms minimised by L-BFGS over the pixels of $(u_Q,u_U)$ (10 rounds of 50 iterations, 8.5\,min per round on an A100) give spectra as close to the cross spectrum over $|b|>30^\circ$, to 3\% for $\ell<300$, and closer over $|b|>60^\circ$ (Table~\ref{tab:real}). They remove 0.75 times the noise rms on $Q$, as the network, but only 0.50 on $U$. The spectrum of $d-u$ follows that of the noise to 8\% for $\ell\ge100$ and falls far below it at the largest scales: the per-map solution leaves the largest scales of $d$ in place. The amortised network is therefore not worse than the per-map minimisation of the same loss, and removes more noise; the remaining errors of the spectra come from the loss, not from the amortisation.
 
-\begin{figure}
-  \centering
-  \figfile{highlat_spectra.pdf}{\columnwidth}
-  \caption{EE (left) and BB (right) spectra of $u$ over the half-mission cross spectrum $d_1\times d_2$, over $|b|>30^\circ$ (top) and $|b|>60^\circ$ (bottom), with frozen biases and the mask $|b|>60^\circ$ in $L_{\rm cl}$ for the network and the per-map L-BFGS reference on $Q$ and $U$ separately, and for the joint $(Q,U)$ network with $L_{\rm cl}$ on EE and BB (biases not frozen). 1 for a perfect denoising.}
-  \label{fig:highlat}
-\end{figure}
+\paragraph{Null test of the conditioning.} Since the 857\,GHz map is both an input of the network and the template of $L_3$, the network could imprint it on the residual. The correlation coefficient of $d-u$ with $I_{857}$ is at most 0.011 in absolute value for $Q$ and $U$, over the full sky or $|b|>30^\circ$, where noise maps alone scatter by 0.07 because of their large-scale correlations.
 
-\paragraph{High latitudes.} At $|b|>60^\circ$, the spectra of $u$ for $100\le\ell<200$ are 0.75--0.90 (EE) and 1.08--1.28 (BB) times the cross spectrum in the two network runs of Figs.~\ref{fig:real_bicep}--\ref{fig:real_spectra}, against 0.91--0.92 and 1.12--1.14 over $|b|>30^\circ$: the faintest sky is the least constrained by masks that stop at $45^\circ$. Adding the mask $|b|>60^\circ$ to $L_{\rm cl}$ helps the per-map reference (above) but not the network. Trained with frozen biases, full-sky statistics, the conditioning and this mask (3000 steps, 4.0\,s per step), the network gives over $|b|>30^\circ$ the same spectra as the two runs above (Table~\ref{tab:real}). Over $|b|>60^\circ$, $u$ is 0.81 (EE) and 1.30 (BB) times the cross spectrum for $100\le\ell<200$, and 0.77 and 1.46 for $200\le\ell<300$ (Fig.~\ref{fig:highlat}). Constraining the total spectrum of $Q$ and $U$ in the faint sky does not remove the excess of B there.
+\paragraph{The spread between trainings.} Two trainings with the same loss do not end on the same map. The native and PyTorch networks, which compute the same loss and gradient to $10^{-7}$ step by step, trained with the same options (frozen biases, without $L_{\rm cl}$), give maps that differ by 0.67 ($Q$) and 0.53 ($U$) times the noise rms, and removed parts with a correlation coefficient of only 0.70 and 0.76. The difference comes from the training itself: other noise draws, the order of floating-point operations, and a loss that does not determine $u$ uniquely. With $L_{\rm cl}$ and the terms on the E and B maps, a second seed changes the ratios of Table~\ref{tab:real} by at most 0.02 over $|b|>30^\circ$ and 0.03 over $|b|>60^\circ$ (PyTorch, 1000 steps). Differences of a few per cent between single runs are within this spread. Several trainings per configuration are needed to quote errors, and their mean is itself a better estimate of $u$.
 
-\paragraph{EE and BB constrained separately.} One network for $(Q,U)$, trained on both fields at every step with $L_{\rm cl}$ on the EE and BB cross spectra (masks up to $|b|>60^\circ$, conditioning on the 857\,GHz map, biases not frozen; 3000 steps, 8.1\,s per step on an A100 for the two fields), removes the excess of B (Fig.~\ref{fig:highlat}). Over $|b|>30^\circ$, $u$ follows the cross spectrum to 2\% in EE and BB in the four multipole ranges of Table~\ref{tab:real}: the EE deficit of 15\% and the BB excess of 25--29\% at $200\le\ell<450$ of the networks on $Q$ and $U$ both disappear. Over $|b|>60^\circ$, $u$ is 1.01 (EE) and 0.99 (BB) times the cross spectrum for $100\le\ell<200$, and 0.99 and 1.02 for $200\le\ell<300$; only for $300\le\ell<450$ is BB still 1.59 times above it, where the cross spectrum of the faintest sky is the least certain. The removed rms is 0.79 ($Q$) and 0.77 ($U$) times the noise, as for the other networks, and the distances of the scattering statistics of $u$ to those of the sky are those of the run on $Q$ and $U$ separately. At large scales, the spectrum of $d-u$ is 0.38 times the noise for $30\le\ell<60$. The deficit of E and the excess of B at small scales therefore came from a spectrum loss that measured EE and BB together, not from the scattering terms.
+\section{Native implementation and cost}\label{sec:native}
 
-\begin{figure*}
-  \centering
-  \figfile{eb1k_bicep.pdf}{\textwidth}
-  \figfile{eb1k_maps.pdf}{\textwidth}
-  \figfile{eb1k_spectra.pdf}{0.8\textwidth}
-  \caption{Same layout as Figs.~\ref{fig:real_bicep}, \ref{fig:real_maps} and \ref{fig:real_spectra} for the joint $(Q,U)$ network with every term computed on the E and B maps (frozen biases, masked statistics, $|b|>60^\circ$ in $L_{\rm cl}$, 1000 steps). Top: BICEP2 field; middle: full sky; bottom: EE and BB pseudo-spectra over $|b|>30^\circ$.}
-  \label{fig:eb1k}
-\end{figure*}
-
-\paragraph{Statistics on the E and B maps.} The scattering statistics of $Q$ and $U$ taken separately depend on the frame of reference on the sphere; those of the E and B maps do not. We trained one $(Q,U)$ network with every term, the spectrum term included, computed on the E and B maps, with the setting of the second run of Fig.~\ref{fig:real_bicep} (frozen biases, statistics averaged under the galactic masks, conditioning on the 857\,GHz map, $|b|>60^\circ$ in $L_{\rm cl}$), for 1000 Adam steps (10.0\,s per step for the two fields). The same setting on $Q$ and $U$ separately, over 1000 steps as well, serves as reference. Over $|b|>30^\circ$ (Table~\ref{tab:real}, Fig.~\ref{fig:eb1k}), $u$ follows the cross spectrum to 3\% in EE and 1\% in BB up to $\ell=300$, and is 0.93 (EE) and 0.95 (BB) times it for $300\le\ell<450$, against 0.92/1.11, 0.84/1.24 and 0.77/1.23 for $100\le\ell<200$, $200\le\ell<300$ and $300\le\ell<450$ with the reference. Over $|b|>60^\circ$, $u$ is 0.98 (EE) and 0.93 (BB) times the cross spectrum for $100\le\ell<200$, 0.85 and 0.77 for $200\le\ell<300$, and 0.86 and 1.38 for $300\le\ell<450$, against 0.83/1.21, 0.65/1.21 and 0.66/2.65 with the reference: the excess of B in the faint sky is halved, and no longer present below $\ell=300$. The removed rms is 0.77 ($Q$) and 0.73 ($U$) times the noise (0.79 and 0.77 for the reference), and the spectrum of $d-u$ follows that of the noise to 10\% for $\ell\ge100$ (Fig.~\ref{fig:eb1k}). At large scales, the spectrum of $d-u$ is 0.76 times the noise for $30\le\ell<60$, but exceeds it for $\ell\lesssim20$ in EE: the network changes the largest scales of the map slightly, where the dust spectrum is two orders of magnitude above. A second run with another seed gives the same result: over $|b|>30^\circ$ the ratios of Table~\ref{tab:real} change by at most 0.02 and the removed rms is 0.75 and 0.74; over $|b|>60^\circ$ they change by at most 0.03, except BB for $300\le\ell<450$, 1.53 against 1.38, where the faint-sky cross spectrum is the least certain.
-
-A further term asking $u$ and $d-u$ to be uncorrelated, $C_b(u,d-u)=0$ with a variance fixed by the half-mission maps, increased the removed noise at $\nside=64$ without changing the spectra over $|b|>30^\circ$. Added to this run, it removes the large scales instead: the spectrum of $d-u$ is 2.1 times the noise for $30\le\ell<60$, and over $|b|>60^\circ$ $u$ is 0.67 (EE) and 0.80 (BB) times the cross spectrum there, while BB rises to 2.13 for $300\le\ell<450$. We do not keep it.
-
-\begin{figure*}
-  \centering
-  \figfile{leb1k_bicep.pdf}{\textwidth}
-  \figfile{leb1k_maps.pdf}{\textwidth}
-  \figfile{leb1k_spectra.pdf}{0.8\textwidth}
-  \caption{Same as Fig.~\ref{fig:eb1k} for the per-map L-BFGS reference with the same terms, on the E and B maps of $(u_Q,u_U)$ (frozen biases, masked statistics, $|b|>60^\circ$ in $L_{\rm cl}$; 10 rounds of 50 iterations). Top: BICEP2 field; middle: full sky; bottom: EE and BB pseudo-spectra over $|b|>30^\circ$.}
-  \label{fig:leb1k}
-\end{figure*}
-
-\paragraph{Per-map reference on the E and B maps.} The same terms, minimised by L-BFGS over the pixels of the pair $(u_Q,u_U)$ (10 rounds of 50 iterations, the biases re-estimated at the start of every round; 8.5\,min per round on an A100), give spectra as close to the cross spectrum as the network over $|b|>30^\circ$, to 3\% for $\ell<300$ and 0.98 (EE) and 0.96 (BB) for $300\le\ell<450$ (Table~\ref{tab:real}, Fig.~\ref{fig:leb1k}), and closer over $|b|>60^\circ$: 0.99/1.02, 1.02/1.00 and 0.95/0.98 for $30\le\ell<60$, $100\le\ell<200$ and $200\le\ell<300$. For $300\le\ell<450$, BB is 1.38 times the cross spectrum at $|b|>60^\circ$, as with the network: this excess comes from the loss. The removed rms is 0.75 times the noise for $Q$, as for the network, but 0.50 for $U$, against 0.73. The spectrum of $d-u$ follows that of the noise to 8\% for $\ell\ge100$, and falls below it at large scales (0.68 times the noise for $30\le\ell<60$, much less below $\ell=20$): unlike the network, the per-map solution leaves the largest scales of $d$ in place. At $\nside=64$, the same comparison gave a per-map solution that removed less than half the noise power the network removed at $\ell<100$, for a lower final loss; the advantage of the network in removing noise therefore depends on the resolution, and at $\nside=256$ it remains only on $U$.
-
-\begin{figure*}
-  \centering
-  \figfile{eb1kc16_bicep.pdf}{\textwidth}
-  \figfile{eb1kc16_maps.pdf}{\textwidth}
-  \figfile{eb1kc16_spectra.pdf}{0.8\textwidth}
-  \caption{Same as Fig.~\ref{fig:eb1k} for a network with four times fewer channels (16, 32, 48, then 64 per level; $6.0\times10^5$ parameters). Top: BICEP2 field; middle: full sky; bottom: EE and BB pseudo-spectra over $|b|>30^\circ$.}
-  \label{fig:eb1kc16}
-\end{figure*}
-
-\begin{figure*}
-  \centering
-  \figfile{eb3kc16_bicep.pdf}{\textwidth}
-  \figfile{eb3kc16_maps.pdf}{\textwidth}
-  \figfile{eb3kc16_spectra.pdf}{0.8\textwidth}
-  \caption{Same as Fig.~\ref{fig:eb1kc16} after 3000 training steps instead of 1000. Top: BICEP2 field; middle: full sky; bottom: EE and BB pseudo-spectra over $|b|>30^\circ$.}
-  \label{fig:eb3kc16}
-\end{figure*}
-
-\paragraph{Width of the network.} At $\nside=64$, the width of the network changed how much noise it removed: with the loss of this section on the E and B maps, a network with 64 to 256 channels per level removed much less noise than the default one at $\ell<100$, close to the per-map solution, and one with 16 to 64 channels about as much. At $\nside=256$, the network with 16, 32, 48 and then 64 channels ($6.0\times10^5$ parameters, against $2.4\times10^6$; 9.5\,s per step, the cost being that of the statistics) gives the same spectra as the default one (Table~\ref{tab:real}, Fig.~\ref{fig:eb1kc16}): over $|b|>30^\circ$ the ratios differ by at most 0.03, and over $|b|>60^\circ$ they are 0.93/0.98, 1.01/0.96 and 0.89/0.88 for $30\le\ell<60$, $100\le\ell<200$ and $200\le\ell<300$, slightly closer to 1 than the default network, with BB at 1.57 for $300\le\ell<450$. It removes a little less noise on $Q$ (0.69 against 0.77) and as much on $U$ (0.73). At this resolution, the capacity of the network is not what limits the denoising. The length of the training matters more. The same network trained for 3000 steps instead of 1000 removes 0.80 ($Q$) and 0.77 ($U$) times the rms of the noise, as much as the joint network with the EE/BB spectrum loss and live biases. Over $|b|>30^\circ$ its spectra follow the cross spectrum to 1\% up to $\ell=300$, and reach 0.94 (EE) and 0.95 (BB) for $300\le\ell<450$ (Table~\ref{tab:real}, Fig.~\ref{fig:eb3kc16}). Over $|b|>60^\circ$ they are 0.90/0.94, 1.01/0.97 and 0.93/0.93 for $30\le\ell<60$, $100\le\ell<200$ and $200\le\ell<300$, and BB is again 1.57 times the cross spectrum for $300\le\ell<450$. Over $|b|>60^\circ$, the joint network with live biases stays closer to the cross spectrum (0.97/1.00, 1.01/0.99, 0.99/1.02). It removes less noise at large scales, though: the spectrum of $d-u$ is 0.38 times the noise for $30\le\ell<60$, against 0.79.
-
-\paragraph{Statistics of the removed part.} $L_2$ asks the cross statistics of $d$ and $u$ to be those of $u+\tilde n$ and $u$. A term on the removed part alone, $\Phi(d-u)$ against $\Phi(n)$ with the half-mission difference as noise, does not do as well. We replaced $L_2$ by this term, together with the cross spectrum of $u$ with the 857\,GHz map and the spectrum of $d-u$ against that of the noise (1000 steps, separate $Q$ and $U$ fields, the other options as for the loss with $L_{\rm cl}$). The network then removes 0.96 ($Q$) and 0.92 ($U$) times the rms of the noise, against 0.79 and 0.77, but the statistics of $u+\tilde n$ no longer match those of $d$: the data term at evaluation is 21 instead of 1.2 on $Q$. Over $|b|>60^\circ$, BB reaches 1.81, 1.79 and 4.46 times the cross spectrum for $100\le\ell<200$, $200\le\ell<300$ and $300\le\ell<450$, against 1.21, 1.21 and 2.65. Matching the statistics of $d-u$ to those of the noise does not tie the removed part to the structures of $d$, and the half-mission difference overestimates the noise of $d$ by about 10\%. The cross statistics of $L_2$ keep $u$ aligned with the shapes of $d$ and have no noise bias on most coefficients (Table~\ref{tab:bias}).
-
-\paragraph{Training on discs.} The same loss can be computed on discs: the scattering terms with the disc statistics of Sect.~\ref{sec:n256}, and the spectrum loss on the pseudo-spectra of the disc, with E and B computed from the $(Q,U)$ maps of the disc times a cosine taper. At $\nside=64$, with discs of $27^\circ$ centred on the 48 pixels of $\nside=2$ (cores of $17^\circ$, eight discs per step, 1000 steps), the spectra of $u$ stay within 2\% of the cross spectrum over $|b|>30^\circ$, but the network removes almost no noise at large scales. The spectrum of $d-u$ is 0.03, 0.08 and 0.30 times that of the half-mission noise for $10\le\ell<30$, $30\le\ell<60$ and $60\le\ell<100$. The same network trained on the full sky gives 0.51, 0.79 and 1.31. A loss computed on discs does not constrain the scales larger than the disc, whose spectrum is set over the full sky. A step on eight discs also took twice as long as a full-sky step (5.2 against 2.7\,s). We therefore train on the full sky.
-
-\subsection{A native U-Net in Rust}\label{sec:native}
-
-In the runs above, the network runs in PyTorch and the statistics in the Rust engine of STL-Dev-MPI. At every step the maps go from the GPU of the network to the engine, and the cotangents come back. The U-Net can also be written in the engine itself. The convolutions of the network are those of the statistics: the stencil of Sect.~\ref{sec:unet} and the NESTED pyramid, already in the engine with their exact adjoints. We therefore wrote the same network in Rust, \texttt{NativeUNet} (STL-Dev-MPI): same levels, channels, normalisation and conditioning, 2\,384\,193 parameters at $\nside=256$. Its forward and backward passes, the scattering terms, their frozen biases (zero on the coefficients without noise bias) and the optimiser all run in the engine on one GPU, with Adam or L-BFGS. Its weights are those of \texttt{stlia.unet.UNet}: a model trained in Rust loads in PyTorch and gives the same $u$ to $4\times10^{-7}$. For the same weights and noise draws, the loss terms agree to $10^{-7}$ and their gradients to $8\times10^{-6}$ (relative), the difference between single- and double-precision arithmetic.
+The U-Net is written in the Rust engine of STL-Dev-MPI, \texttt{NativeUNet}: its convolutions are those of the statistics, the stencil of Sect.~\ref{sec:unet} and the NESTED pyramid, already in the engine with their exact adjoints. Its forward and backward passes, the transform $\mathcal{T}$ and its transpose, the scattering terms, their frozen biases, the spectrum term and the optimiser all run in the engine on one GPU. Its weights are those of the PyTorch network of the repository: a model trained in Rust loads in PyTorch and gives the same $u$ to $4\times10^{-7}$. For the same weights and noise draws, the loss terms agree to $10^{-7}$ and their gradients to $8\times10^{-6}$ (relative), the difference between single- and double-precision arithmetic.
 
 \begin{table}
-  \caption{One training step with frozen biases ($\mathcal{L}_{\rm data}+L_1+L_2+L_3$, four realisations) on an A100, with the PyTorch network and the engine, or with the native network.}
+  \caption{One training step with frozen biases ($\mathcal{L}_{\rm data}+L_1+L_2+L_3$, four realisations, one field) on an A100, with the PyTorch network calling the engine, or with the native network.}
   \label{tab:native}
   \centering
   \footnotesize
@@ -436,36 +211,69 @@ In the runs above, the network runs in PyTorch and the statistics in the Rust en
   \end{tabular}
 \end{table}
 
-\paragraph{Cost.} At $\nside=256$ a step takes 1.16\,s instead of 3.40\,s, and the peak GPU memory is 8.6\,GB instead of 30.5\,GB (Table~\ref{tab:native}). The bias estimate (40 draws, one field) costs the same in both codes, since a scattering statistic takes the same time through either: its cost is the number of statistics, one auto and three cross per draw. At $\nside=128$ on a T4 it takes 10.8\,s in the native code against 12.1\,s, after a first call of 17.5\,s that builds the GPU engines; it comes once every 50 steps. The training of Sect.~\ref{sec:real} with frozen biases (3000 Adam steps) takes 51\,min instead of 3\,h\,13\,min. The memory saved is what matters for higher resolutions: at this rate a full-sky training at $\nside=512$ fits on one A100.
+\paragraph{Cost.} With the networks of the reference setting, a step takes 3.6\,s on an A100 for the two fields, against 9.3\,s for the PyTorch network calling the same engine (Table~\ref{tab:real}), and 2.7\,s for the native network on the E and B maps, which skips $\mathcal{T}$ on the output. The training takes 3\,h\,02\,min instead of 7\,h\,46\,min. With the spectrum term computed inside the engine rather than through Python, a step of the warm-up takes 6.1 instead of 7.1\,s. The memory matters for higher resolutions: the native trainer on the E and B maps uses 1.4, 4.6 and 11.4\,GB at $\nside=64$, 128 and 256.
 
-\paragraph{Results, and the spread between trainings.} Trained with the same options as the PyTorch network with frozen biases, the native network removes 0.88 ($Q$) and 0.76 ($U$) times the rms of the noise, against 0.86 and 0.77. Its spectra are of the same kind (Table~\ref{tab:real}). They follow the cross spectrum to 5\% up to $\ell=60$ and to 13\% for $100\le\ell<200$, and lose power beyond. The two maps are not the same, however. The rms of $u_{\rm native}-u_{\rm PyTorch}$ is 0.67 ($Q$) and 0.53 ($U$) times that of the noise, and the removed parts $d-u$ of the two runs have a correlation coefficient of only 0.70 ($Q$) and 0.76 ($U$). The spectra differ accordingly: for $200\le\ell<300$, $u$ reaches 50\% of the EE cross spectrum with the native network against 67\%, and for $100\le\ell<200$ its $d-u$ is 1.6 times the noise in EE against 1.05. Step by step the two codes compute the same loss and gradient. The difference therefore comes from the training itself: other noise draws, the order of floating-point operations, and a loss that does not determine $u$ uniquely. Two trainings that reach losses of the same level end on maps that differ by a large fraction of the noise. This spread applies to every comparison between single runs in this paper. Differences of a few percent between runs in Table~\ref{tab:real} are within it; those of the spectrum loss on the small scales (a factor 1.3 on EE) and of the masks on $d-u$ are larger. Several trainings per configuration, with different seeds, are needed to quote errors, and their mean is itself a better estimate of $u$.
+\paragraph{Where the time goes.} Profiled on a T4 at $\nside=256$ with the reference options, a step with frozen biases takes 15.7\,s: 86\% for the scattering statistics of the output and their gradient (the gradient alone 56\%), 9\% for $\mathcal{T}$ and its transpose, 4\% for the U-Net forward and backward, 1\% for the spectrum term. A step with live biases takes 41\,s, 95\% of it for the statistics of the four draws. A bias estimate (40 draws) takes 103\,s, 2.1\,s per step at one estimate every 50 steps. A faster network would therefore gain little; the cost is that of the statistics.
 
-\paragraph{Joint native network with a spin-2 front end.} The native network also trains the pair $(Q,U)$ with one pass per step, with every scattering term computed on the spin-0 map $\chi=\bar\eth^2(u_Q+iu_U)$ of its output, whose real and imaginary parts are the E and B maps weighted by $\sqrt{(\ell+2)!/(\ell-2)!}$, and the spectrum loss on the EE and BB pseudo-spectra of $(Q,U)$. The biases of both fields come from one set of draws for all the terms: live for the first 200 steps, then frozen and re-estimated every 50 steps with 40 draws among 40 noise simulations (statistics averaged under the galactic masks, conditioning on the 857\,GHz map, 3000 Adam steps). On one A100 a step takes 3.0\,s for the two fields (6.1\,s during the steps with live biases), and the training 2\,h\,28\,min, against 9.5\,s per step for the PyTorch network of Fig.~\ref{fig:eb3kc16}. Over $|b|>30^\circ$, $u$ follows the cross spectrum to 1\% up to $\ell=300$, and is 0.98 (EE) and 0.96 (BB) times it for $300\le\ell<450$ (Table~\ref{tab:real}). The network removes 0.88 ($Q$) and 0.84 ($U$) times the rms of the noise, more than the PyTorch networks, but part of it is sky at large scales: the EE spectrum of $d-u$ is 1.5 times that of the noise for $30\le\ell<60$ and 8 times for $10\le\ell<30$, against 0.8 and 1.2 for the PyTorch network on the E and B maps. The dust is two orders of magnitude above the noise there, so that the spectra of $u$ still follow the cross spectrum to 2\%. A likely reason is the weight of $\chi$, which grows as $\ell^4$: between $\ell=20$ and $\ell=2\nside$ it reaches $4\times10^5$ at $\nside=256$, and the scattering terms hardly see the largest scales, against $2\times10^3$ at $\nside=64$, where the same front end removed no sky at large scales ($d-u$ at 0.55 times the noise for $10\le\ell<30$). A network trained from $\nside=128$ for 300 steps at $\nside=256$ with lighter bias settings (6 noise simulations, no live-bias steps) removes even more there (6 times the noise for $10\le\ell<30$).
+\section{History of the tests and of the choices}\label{sec:history}
 
-\begin{figure*}
+The reference setting results from the tests below, in the order in which they were made. Table~\ref{tab:choices} gathers, for each choice, the alternatives and the result that decided it. Every run is in \texttt{scripts/reproduce.sh}, with its options.
+
+\begin{table*}
+  \caption{Choices of the reference setting, the alternatives tested, and the result that decided each. Numbers are from the PR3 maps at $\nside=256$ unless stated otherwise; $\sigma$: rms over that of the noise; $u/x$: spectrum of $u$ over the half-mission cross spectrum; $(d-u)/n$: EE spectrum of the removed part over the noise spectrum.}
+  \label{tab:choices}
   \centering
-  \figfile{n256eb_bicep.pdf}{\textwidth}
-  \figfile{n256eb_maps.pdf}{\textwidth}
-  \figfile{n256eb_spectra.pdf}{0.8\textwidth}
-  \caption{Same layout as Fig.~\ref{fig:eb1k} for the joint native network with every term on the E and B maps (live biases for 200 steps, then frozen and re-estimated every 50 steps, 3000 steps). Top: BICEP2 field; middle: full sky; bottom: EE and BB pseudo-spectra over $|b|>30^\circ$.}
-  \label{fig:n256eb}
-\end{figure*}
+  \footnotesize
+  \begin{tabular}{p{2.6cm}p{3.3cm}p{4.2cm}p{6.6cm}}
+    \hline\hline
+    choice & kept & alternatives & deciding result \\
+    \hline
+    convolution & sphere stencil, $\phi$ gauge & $3\times3$ planar convolutions on the 12 base faces with padding; cosmo gauge & faces: error details 1.36 ($Q$) and 1.16 ($U$) times larger along the face edges, against 0.99--1.04 with the stencil in both gauges (mock, $\nside=64$); the gauges are equivalent \\
+    domain of the loss & full sky & discs of $10^\circ$--$27^\circ$ & discs do not constrain the scales larger than the disc: $(d-u)/n$ 0.03--0.30 at $\ell<100$ against 0.51--1.31 (PR3, $\nside=64$); a step twice as long \\
+    loss terms & $\mathcal{L}_{\rm data}+L_1+L_2+L_3$ & auto term only; cross terms only & cross terms alone let the mean of $u$ drift by 60 ergodic standard deviations (mock, $\nside=256$); the auto term fixes it \\
+    spectrum loss & $L_{\rm cl}$ on the half-mission cross spectrum, masks to $|b|>60^\circ$ & none & without it, $u$ reaches only 54--67\% of the EE cross spectrum for $200\le\ell<450$, for the network and for L-BFGS \\
+    noise biases & frozen, biased coefficients only, 40 draws every 50 steps, 200 live steps first & live; frozen on every coefficient & same spectra with $L_{\rm cl}$; the live steps cost 2.6 times a frozen step; frozen biases on unbiased coefficients add scatter \\
+    statistics & averaged under $|b|>0,20,30,45^\circ$ & full sky & the full-sky weights are dominated by the Galactic plane, which leaves the faint sky almost unconstrained; masks cost 16--27\% more time \\
+    conditioning & $\log I_{857}$ and noise level & none & $|{\rm corr}(d-u,I_{857})|\le0.012$; no imprint of the template \\
+    polarisation, spectra & $L_{\rm cl}$ on EE and BB & on the spectra of $Q$ and $U$ & on $Q$, $U$: EE 15\% low and BB 25--28\% high for $200\le\ell<450$; on EE, BB: within 2\% \\
+    polarisation, statistics & on the E and B maps of $u$ & on $Q$ and $U$; on $\chi=\bar\eth^2(Q+iU)$ & on $Q$, $U$: B in excess at $|b|>60^\circ$ (2.65 for $300\le\ell<450$, against 1.38); $\chi$, weighted as $\ell^4$, does not see the large scales: $(d-u)/n=8$ for $10\le\ell<30$ \\
+    network output & $(Q,U)$ & E and B & on E, B: $P(d)$ passed through, $\sigma=0.70$ against 0.81 on $Q$; slightly better large scales at $|b|>60^\circ$ \\
+    width & 16--64 channels & 32--128; 64--256 & same spectra; the narrow network keeps the large scales better ($(d-u)/n=0.90$ against 1.54 for $10\le\ell<30$) at $6\times10^5$ parameters instead of $2.4\times10^6$ \\
+    length & 3000 steps & 1000 & $\sigma=0.80$ against 0.69 on $Q$, same spectra \\
+    extra terms & none & $C_b(u,d-u)=0$; $\Phi(d-u)$ vs $\Phi(n)$ instead of $L_2$ & the first removes the large scales ($(d-u)/n=2.1$ for $30\le\ell<60$); the second breaks the data term (21 instead of 1.2) and doubles the BB excess at $|b|>60^\circ$ \\
+    code & native Rust trainer & PyTorch network calling the engine & 3.6 against 9.3\,s per step; 8.6 against 30.5\,GB at $\nside=256$ \\
+    estimator & amortised network & per-map L-BFGS & same spectra; $\sigma=0.75$, 0.50 against 0.81, 0.75; without masks or $L_{\rm cl}$, L-BFGS changes the large scales ($(d-u)/n=3$--10) \\
+    \hline
+  \end{tabular}
+\end{table*}
 
-\paragraph{Joint native network on the E and B maps.} The same training with the E and B maps of the data, of the half-mission maps and of the noise simulations computed once before training, and every term on them (\texttt{--pol eb}), confirms this explanation (Table~\ref{tab:real}, Fig.~\ref{fig:n256eb}). The EE spectrum of $d-u$ is 2.0, 0.85 and 0.65 times that of the half-mission noise for $10\le\ell<30$, $30\le\ell<60$ and $60\le\ell<100$, against 10.6, 1.76 and 0.94 with the spin-2 front end and 1.57, 0.92 and 0.88 for the PyTorch network on the E and B maps. Over $|b|>30^\circ$, $u$ follows the cross spectrum to 2\% up to $\ell=300$, and is 0.96 (EE) and 0.95 (BB) times it for $300\le\ell<450$. Over $|b|>60^\circ$ it is 0.95/0.96, 0.98/0.90 and 0.88/0.82 for $30\le\ell<60$, $100\le\ell<200$ and $200\le\ell<300$, and BB is 1.51 times the cross spectrum for $300\le\ell<450$, as for the other networks. The network removes 0.70 times the rms of the noise in $Q$ and $U$, less than the PyTorch network (0.80 and 0.77) but without removing sky at large scales. A step takes 2.6\,s on an A100 for the two fields, and the training 2\,h\,22\,min, against about 8\,h for the PyTorch network: the statistics on E and B, not on $\bar\eth^2(Q+iU)$, are the choice for the native network at $\nside=256$.
-
-With 16, 32, 48 and then 64 channels per level, as the narrow PyTorch network, the native network on the E and B maps removes the same rms (0.70 and 0.71 times the noise) and keeps the large scales better: the EE spectrum of $d-u$ is 0.90, 0.71, 0.79 and 0.93 times that of the FFP10 noise for $10\le\ell<30$, $30\le\ell<60$, $60\le\ell<100$ and $100\le\ell<160$, against 1.54, 0.74, 0.63 and 0.82 with the default width and 1.20, 0.81, 0.85 and 0.94 for the narrow PyTorch network. Over $|b|>30^\circ$, $u$ follows the cross spectrum to 2\% up to $\ell=300$ (Table~\ref{tab:real}). Over $|b|>60^\circ$ it is 0.98/1.01, 0.99/0.95 and 0.94/0.94 for $30\le\ell<60$, $100\le\ell<200$ and $200\le\ell<300$, closer to 1 than any other network except the joint one with live biases, which removes less noise at large scales; BB is again 1.57 times the cross spectrum for $300\le\ell<450$. A step takes 2.7\,s on an A100, and the training 2\,h\,15\,min. Of the networks trained here, this one gives the spectra closest to the cross spectrum at all latitudes without removing sky at large scales, for the lowest cost.
-It removes less rms than the narrow PyTorch network (0.70 against 0.80 times the noise), and the difference lies entirely outside the E/B transform. With $P(x)=x-\mathrm{QU}(\mathrm{EB}(x))$, the part of a map lost in the round trip through the E and B maps ($\ell\le3N_\mathrm{side}-1$, three iterations), $P$ holds 0.47 times the rms of an FFP10 noise map. On the residual $d-u$ of the PyTorch network, $\mathrm{QU}(\mathrm{EB}(d-u))$ is 0.68 times the noise rms and $P(d-u)$ is 0.32. For the native network these are 0.67 and 0.01: it returns $u=d-\mathrm{QU}(d_{EB}-u_{EB})$, so $P(d)$ is passed through unchanged. Within the E and B maps the two networks remove the same noise, and their spectra agree up to $\ell=512$. The PyTorch network maps $(Q,U)$ to $(Q,U)$ and its smooth output also removes about two thirds of $P(d)$, mostly pixel-scale noise. No loss term constrains this removal, because every term is computed on the E and B maps.
-
-\paragraph{Native network on $(Q,U)$ with statistics on E and B.} To test this, the native network was given the same structure as the PyTorch one: it maps $(Q,U)$ to $(Q,U)$, and its terms are those of $\mathrm{EB}(u)$. The transform and its exact transpose run on the GPU, batched over the maps; the noise simulations and half missions are transformed once at setup. The removed rms becomes 0.81 ($Q$) and 0.75 ($U$) times the noise. It splits into 0.68 within the E/B maps and 0.31 in $P$, against 0.68 and 0.32 for the PyTorch network. Over $|b|>20^\circ$, it removes 0.89--0.90 times the noise at every latitude, as the PyTorch network (0.88--0.91), against 0.80 with the network on E and B. The large scales are kept as with the network on E and B: over $|b|>30^\circ$ the EE spectrum of $d-u$ is 0.86, 0.72, 0.84 and 0.94 times that of the FFP10 noise for $10\le\ell<30$, $30\le\ell<60$, $60\le\ell<100$ and $100\le\ell<160$ (1.20, 0.81, 0.85, 0.94 for PyTorch). $u$ follows the cross spectrum to 2\% up to $\ell=512$ over $|b|>30^\circ$. Over $|b|>60^\circ$ it falls to 0.90/0.91 (EE/BB) for $10\le\ell<30$ and 0.94/0.93 for $30\le\ell<60$, as for PyTorch (0.88/0.90, 0.90/0.94), where the network on E and B gives 0.96/1.00 and 0.98/1.01. Removing the pixel-scale part of the noise therefore comes with a few per cent less sky at the largest scales of the cleanest regions. The two native networks bracket this choice. A step takes 3.6\,s on an A100 (3\,h\,02\,min for 3000 steps), against 2.7\,s for the network on E and B and 9.3\,s for the PyTorch network.
+\begin{enumerate}
+  \item \emph{Mock data at $\nside=64$} (white noise added to the PR3 map, taken as the sky). With uniform noise of half the rms of $Q$, the statistics of $u$ reach those of the clean training sky to about one ergodic standard deviation for every family, against 8.6 to 54 for $d$, and the pixel error falls to 0.42 times the noise; on $U$, never seen, the network removes less (0.57) since it was amortised over the noise of a single sky. With the PR3 noise level the network leaves the statistics at or below their level for $d$.
+  \item \emph{Planar convolutions on the base faces} against the sphere stencil (Table~\ref{tab:choices}): thin lines along the face edges, since the padded features are not re-oriented across an edge and the eight vertices where three faces meet have no corner neighbour. The stencil removes them, at the same cost (51\,ms per forward and backward pass at $\nside=64$ on a T4).
+  \item \emph{Mock data at $\nside=256$ with the FFP10 noise.} With the auto loss alone, $S_1$ goes from 25 to 0.94 ergodic standard deviations of the clean sky. The cross terms of \citet{delouis2022} alone let the mean drift; on $10^\circ$ discs with $J=4$, neither the large scales nor the bright plane are constrained.
+  \item \emph{PR3 maps, separate $Q$ and $U$, live biases, without $L_{\rm cl}$.} The spectra follow the cross spectrum up to $\ell=200$ and lose power beyond ($u$ at 54--64\% in EE). The per-map L-BFGS reference does the same at small scales and changes the large scales 3 to 10 times above the noise level: the deficit comes from the loss, and the network keeps the large scales.
+  \item \emph{Spectrum loss and conditioning on $I_{857}$.} The EE deficit at small scales is removed, with BB 25--28\% too high: a spectrum of $Q$ or of $U$ constrains EE and BB together. The null test of the conditioning passes.
+  \item \emph{Frozen biases and masked statistics.} Without $L_{\rm cl}$, frozen biases lose power at small scales, for the network and for L-BFGS, probably because the bias is estimated at a map that still contains noise; with $L_{\rm cl}$ the spectra are unchanged. The live warm-up of 200 steps was added for this reason.
+  \item \emph{$L_{\rm cl}$ on EE and BB}, one network for $(Q,U)$: both spectra within 2\% over $|b|>30^\circ$.
+  \item \emph{Statistics on the E and B maps.} The excess of B at $|b|>60^\circ$ is halved. The per-map reference with the same terms gives the same spectra and removes less noise on $U$. A second seed changes the ratios by at most 0.02.
+  \item \emph{Two rejected terms}: a decorrelation of $u$ and $d-u$, and the statistics of $d-u$ against those of the noise (Table~\ref{tab:choices}).
+  \item \emph{Width and length.} Four times fewer channels give the same spectra; 3000 steps instead of 1000 remove more noise.
+  \item \emph{Native U-Net in Rust.} Same loss and gradient as the PyTorch network to $10^{-7}$; three times faster, a quarter of the memory. The comparison of the two trainings measures the spread between trainings (Sect.~\ref{sec:results}).
+  \item \emph{Native statistics on $\chi=\bar\eth^2(Q+iU)$} computed by the engine: the weight $\sqrt{(\ell+2)!/(\ell-2)!}$ grows as $\ell^2$ in amplitude, by $4\times10^5$ in power between $\ell=20$ and $2\nside$ at $\nside=256$, and the network removes sky at large scales ($(d-u)/n$ 8 for $10\le\ell<30$), which it did not do at $\nside=64$.
+  \item \emph{Native network on the E and B maps}: the large scales are kept, but only 0.70 of the noise rms is removed, against 0.80 in PyTorch. The whole difference lies in $P$ (Sect.~\ref{sec:eb}).
+  \item \emph{Native network on $(Q,U)$ with the terms on E and B}, the reference: the removal of $P$ is that of PyTorch (0.31 against 0.32), at 3.6\,s per step.
+  \item \emph{Spectrum term inside the engine}: same values to $3\times10^{-15}$ and gradients to $10^{-7}$; one network pass per step instead of two.
+  \item \emph{Profile of a step} (Sect.~\ref{sec:native}): the statistics take 86--95\% of the time, the U-Net 1--4\%. A U-Net with planar convolutions on the faces of the E and B maps, faster in itself, would gain at most 4\% per step, and is not pursued for speed. Single-precision statistics are under test.
+\end{enumerate}
 
 \section{Discussion and next steps}
 
-The statistical constraint of \citet{delouis2022} can train a network instead of driving a per-map optimisation. On mock data with a known sky, the U-Net reproduces the scattering covariances of the clean training map to one ergodic standard deviation from noisy data only. On the PR3 353\,GHz maps, it gives the same spectra as the per-map L-BFGS minimisation of the same loss at small scales and better ones at large scales, for one network evaluation per map once trained. The comparison locates the remaining errors in the loss rather than in the amortisation: without the spectrum loss both lose power at small scales, and with it both leave too much power in B. The next steps are:
+The statistical constraint of \citet{delouis2022} can train a network instead of driving a per-map optimisation. On the PR3 353\,GHz maps, the network gives the same spectra as the per-map L-BFGS minimisation of the same loss and removes more noise, for one network evaluation per map once trained. The comparison locates the remaining errors, such as the excess of BB in the faintest sky at $300\le\ell<450$, in the loss rather than in the amortisation. The next steps are:
 \begin{enumerate}
-  \item \emph{Polarisation statistics.} The EE and BB cross spectra of a joint $(Q,U)$ network remove the deficit of E and the excess of B at small scales (Sect.~\ref{sec:real}). The scattering terms could likewise be made independent of the frame of $Q$ and $U$, with the statistics either of the E and B maps or local spin-2 statistics in the engine. The network itself still takes $Q$ and $U$ as two scalar maps, which depend on the local frame. A layer from spin 2 to spin 0 at the input, $(Q,U)\mapsto(E,B)$, and its inverse at the output make it independent of that frame. Both are spin-changing convolutions in the sense of \citet{mcewen2026}, equivariant and computed by one spin-weighted harmonic transform each. With the correction $u=d-r$ brought back to $(Q,U)$ by the output layer, $d$ itself does not go through the transforms. Since the data, the half-mission maps and the noise simulations can be transformed once before training, every term of the loss is then computed on scalar maps, with no harmonic transform in the training loop.
+  \item \emph{Resolution.} The native trainer uses 11.4\,GB at $\nside=256$; at $\nside=512$ the memory and the cost of the statistics grow about four times, which single-precision statistics would partly offset. Beyond, the network could be trained at lower resolution first, and the full-sky loss at the target resolution kept for the last steps; disc patches lower the memory but do not constrain the large scales.
   \item \emph{Errors.} Train several networks per configuration with different seeds, quote the spread of the maps and spectra, and use their mean.
-  \item \emph{Many skies and frequencies.} Train on $Q$, $U$ and $I$ at several frequencies and on rotated or synthetic skies, so that the network is amortised over skies and not only over noise, with held-out skies for testing; the noise level, already a conditioning map, then varies too.
-  \item \emph{Resolution.} With the native U-Net, a full-sky training at $\nside=512$ fits on one A100. Disc patches lower the memory but do not constrain the large scales (Sect.~\ref{sec:real}): beyond $\nside=512$, the network could be trained at lower resolution first, and the full-sky loss at the target resolution kept for the last steps.
+  \item \emph{Many skies and frequencies.} Train on $Q$, $U$ and $I$ at several frequencies and on rotated or synthetic skies, so that the network is amortised over skies and not only over noise, with held-out skies for testing.
+  \item \emph{Polarisation layers.} The network takes $Q$ and $U$ as two scalar maps, which depend on the local frame. Spin-changing convolutions \citep{mcewen2026}, from spin 2 to spin 0 at the input and back at the output, would make it independent of that frame while keeping the output in $(Q,U)$.
 \end{enumerate}
 
 \begin{acknowledgements}
@@ -480,7 +288,7 @@ The scattering statistics are computed with STL-Dev-MPI \citep{stldev}; maps are
 
 Every run, figure and table of this paper can be rebuilt from public data on any Linux machine with an NVIDIA GPU; the step-by-step recipe, with a check after every step and the pitfalls we met, is \texttt{REPRODUCE.md} in the repository of this paper (\texttt{jmdelouis/Healpix-STL-IA}). It is written so that it can be followed without knowledge of our cluster, by a person or by an automated agent. We summarise it here.
 
-\paragraph{Code.} This repository (network, training, figures) and STL-Dev-MPI \citep{stldev}, public. The runs of Sects.~3 and \ref{sec:n256} used its commit \texttt{20329e1d2aeb} (the full-sky runs its parent \texttt{66975a4dead9}, with identical full-sky statistics); the later runs need later features of the engine (masked statistics, spectra, spin-2 statistics, native U-Net), and \texttt{REPRODUCE.md} gives the commit and build directory of each. The scattering engine is the Rust library \texttt{stl-bridge}, built with \texttt{cargo build --release -p stl-bridge --features gpu} (Rust stable, 1.99.1 here; no MPI needed), called from Python through \texttt{stl\_port.native}.
+\paragraph{Code.} This repository (network, training, figures) and STL-Dev-MPI \citep{stldev}, public. The runs use several commits of the engine (masked statistics, spectra, spin-2 statistics, native U-Net, E/B transform on the GPU), and \texttt{REPRODUCE.md} and \texttt{scripts/reproduce.sh} give the commit and build directory of each. The scattering engine is the Rust library \texttt{stl-bridge}, built with \texttt{cargo build --release -p stl-bridge --features gpu} (Rust stable, 1.99.1 here; no MPI needed), called from Python through \texttt{stl\_port.native}.
 
 \paragraph{Environment.} Python 3.11 with PyTorch 2.11 (CUDA 12.8 build), NumPy 2.4, SciPy 1.17, healpy 1.20 and Matplotlib 3.11; at run time the GPU engine compiles its kernels with NVRTC, which must match the driver (\texttt{CUDARC\_CUDA\_VERSION} at build time, e.g.\ 13000 for CUDA 13.0). One work directory \texttt{\$R} holds the repository, the STL-Dev-MPI checkout and its build, the data and the runs. The machine is described by a handful of variables (\texttt{R}, the Python interpreter, a site file for modules, and the Slurm options of a one-GPU job and of a 32-core job, empty to run without Slurm) read by \texttt{scripts/env.sh}; those of our runs (Datarmor, Ifremer: A100 80\,GB GPUs; tests on a T4 16\,GB) are \texttt{scripts/hpc\_env.sh}.
 
@@ -489,10 +297,10 @@ Every run, figure and table of this paper can be rebuilt from public data on any
   \item \texttt{scripts/build\_bridge.slurm}: build of the engine (10\,min);
   \item \texttt{scripts/download\_planck.sh 50}: the PR3 353\,GHz PSB full- and half-mission maps, the 857\,GHz map, and 50 FFP10 noise simulations of each of the three 353\,GHz maps from the Planck Legacy Archive (60\,GB);
   \item \texttt{scripts/prepare\_data.slurm}: NESTED parent means at $\nside=256$, 128 and 64, in $\mu{\rm K}_{\rm CMB}$ (3\,h on 4 cores);
-  \item \texttt{scripts/reproduce.sh runs}: the runs of Sects.~3 and \ref{sec:n256} and the denoising of the PR3 maps by the network and by the per-map L-BFGS reference of Sect.~\ref{sec:lbfgs} (\texttt{--optimizer lbfgs}), each with its exact options (seed 0, 3000 steps for the networks, 10 rounds of 50 iterations for L-BFGS; 10\,min per $\nside=64$ run and 0.8 to 3.6\,h per $\nside=256$ run on one A100, 2.8\,h on 32 cores for the CPU patch run);
+  \item \texttt{scripts/reproduce.sh runs}: every run of Sect.~\ref{sec:history} and the reference (\texttt{n256\_ebqu\_c16}), each with its exact options (seed 0; 3000 steps for the networks, 10 rounds of 50 iterations for L-BFGS; 10\,min per $\nside=64$ run and 1 to 8\,h per $\nside=256$ run on one A100);
   \item \texttt{scripts/reproduce.sh figures}: all figures and tables.
 \end{enumerate}
-Each run writes its arguments, loss history and evaluations to \texttt{train.json}. The GPU runs are not bit-reproducible (atomic sums); a rerun agrees with Tables~\ref{tab:results} and \ref{tab:n256} to about 0.02 in pixel error and 20\% on the families of statistics. A five-minute smoke test (Sect.~4 of the recipe) checks the installation before the long runs; the environment, the engine and the smoke test of the recipe were replayed in a fresh directory on the T4 test machine.
+Each run writes its arguments, loss history and evaluations to \texttt{train.json}. The GPU runs are not bit-reproducible (atomic sums); a rerun differs within the spread between trainings of Sect.~\ref{sec:results}. A five-minute smoke test (Sect.~4 of the recipe) checks the installation before the long runs; the environment, the engine and the smoke test of the recipe were replayed in a fresh directory on the T4 test machine.
 \end{appendix}
 
 \end{document}
