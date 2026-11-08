@@ -114,7 +114,7 @@ runs)
     STL=stl_mk gpu l256_fz_mk --nside 256 --real --loss data=1,l1=1,l2=1,l3=1 --stat-masks 0,20,30,45         --realizations 4 --optimizer lbfgs --bias frozen --bias-realizations 40 --lbfgs-rounds 10 --lbfgs-iter 50 --seed 0
     ;;
 figures)
-    # figures of the paper: the reference run, with the GNILC dust map and the BICEP2/Keck field
+    # figures of the paper: the reference run, with the GNILC dust map, the BICEP2/Keck and ACTPol D56 fields
     # (GNILC from the Planck Legacy Archive or IRSA, bk14_mask_gal_n0512.fits from bicepkeck.org, in $R/data/ext)
     E=$R/data/ext
     $PY scripts/prepare_gnilc.py $E/COM_CompMap_IQU-thermaldust-gnilc-varres_2048_R3.00.fits $E

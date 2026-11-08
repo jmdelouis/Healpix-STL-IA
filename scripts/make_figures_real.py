@@ -6,7 +6,7 @@
 RUN_DIR holds eval_{Q,U}.npz (d, u); DATA_DIR the PR3 maps
 (planck353hm{1,2}_{Q,U}_n{nside}.npy) and the FFP10 simulations
 (planck353_noise_{Q,U}_n{nside}_mc{k}.npy).  Writes OUT_DIR/real_maps.pdf
-(full sky), real_bicep.pdf (BICEP2 field) and real_spectra.pdf (EE and BB
+(full sky), real_bicep.pdf (BICEP2 field), real_actpol.pdf (ACTPol D56 field) and real_spectra.pdf (EE and BB
 over |b| > 30 deg: d, u, the half-mission cross spectrum d1 x d2, which has no
 noise bias, the residual d - u, the half-mission difference (d1 - d2)/2 and
 the FFP10 noise).
@@ -22,14 +22,31 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-BICEP2 = (316.0, -58.5)  # galactic (l, b) of the centre of the BICEP2 field (RA 0h, Dec -57.5 deg)
-RESO, XSIZE = 6.0, 560  # gnomonic view of the field: 6 arcmin pixels, 56 deg wide
-EXTENT = [-XSIZE * RESO / 120, XSIZE * RESO / 120] * 2  # degrees from the centre
+RESO = 6.0  # gnomonic views of the fields: 6 arcmin pixels
+# BICEP2: galactic (l, b) of the centre (RA 0h, Dec -57.5 deg), 56 deg wide.  ACTPol D56: equatorial box
+# -8 < RA < 41 deg, -7.2 < Dec < 4 deg (Louis et al. 2017), shown in equatorial coordinates, 56 x 20 deg.
+VIEWS = {"bicep": dict(rot=(316.0, -58.5), coord=None, xsize=560, ysize=560),
+         "actpol": dict(rot=(16.5, -1.6), coord=["G", "C"], xsize=560, ysize=200)}
+D56 = (-8.0, 41.0, -7.2, 4.0)
 
 
-def project(m):
-    """Gnomonic projection of the NESTED map m on the BICEP2 field."""
-    return hp.gnomview(m, nest=True, rot=BICEP2, reso=RESO, xsize=XSIZE, return_projected_map=True, no_plot=True)
+def project(m, view):
+    """Gnomonic projection of the NESTED galactic map m on a field of VIEWS."""
+    return hp.gnomview(m, nest=True, reso=RESO, return_projected_map=True, no_plot=True, **VIEWS[view])
+
+
+def extent(view):
+    """Degrees from the centre of the view."""
+    x, y = (VIEWS[view][k] * RESO / 120 for k in ("xsize", "ysize"))
+    return [-x, x, -y, y]
+
+
+def box_mask(nside, box):
+    """1 inside the equatorial box (RA0, RA1, Dec0, Dec1) in degrees, RA in [-180, 180), NESTED galactic."""
+    theta, phi = hp.pix2ang(nside, np.arange(12 * nside**2), nest=True)
+    th, ph = hp.Rotator(coord=["G", "C"])(theta, phi)
+    ra, dec = (np.degrees(ph) + 180) % 360 - 180, 90 - np.degrees(th)
+    return ((ra > box[0]) & (ra < box[1]) & (dec > box[2]) & (dec < box[3])).astype(float)
 
 
 def id_range(text):
@@ -74,38 +91,54 @@ def main():
     fig.savefig(os.path.join(a.out, "real_maps.pdf"), bbox_inches="tight")
     plt.close(fig)
 
-    # BICEP2 field: d, u and (with --gnilc) the GNILC dust map on one linear scale, then d - u and the
-    # half-mission difference on the scale of the noise; the outline of the field with --field-mask.
+    # Fields: d, u and (with --gnilc) the GNILC dust map on one linear scale, then d - u and the half-mission
+    # difference on the scale of the noise, with the outline of the field (BICEP2 with --field-mask).
     gnilc = {f: np.load(os.path.join(a.gnilc, f"gnilc353_{f}_n{a.nside}.npy")) for f in ev} if a.gnilc else None
-    field = None
+    fields = {"actpol": (box_mask(a.nside, D56), [0.5], ["-"])}
     if a.field_mask:
         w = np.nan_to_num(hp.read_map(a.field_mask))  # NaN outside the field
-        field = project(hp.ud_grade(w, a.nside, order_out="NESTED")).filled(0)
-        field /= field.max()
-    cols = 5 if gnilc else 4
-    fig, axes = plt.subplots(2, cols, figsize=(3.3 * cols, 7.0))
-    for row, f in enumerate(("Q", "U")):
-        dust = project(u[f]).filled(0)
-        inside = field > 0.01 if field is not None else np.ones(dust.shape, bool)
-        vs = np.percentile(np.abs(dust[inside]), 99.5)  # the scale of the dust in the field
-        vn = np.percentile(np.abs(half[f]), 99)
-        panels = [(d[f], f"PR3 map $d$ ({f})", vs), (u[f], f"denoised $u$ ({f})", vs)]
-        if gnilc:
-            panels.append((gnilc[f], f"GNILC ({f})", vs))
-        panels += [(res[f], "$d-u$", vn), (half[f], "$(d_1-d_2)/2$", vn)]
-        for ax, (m, title, v) in zip(axes[row], panels):
-            im = ax.imshow(project(m), origin="lower", cmap="RdBu_r", vmin=-v, vmax=v, extent=EXTENT)
-            if field is not None:
-                # outer edge of the field (1% of the peak weight) and half the peak weight
-                ax.contour(field, levels=[0.01, 0.5], colors="k", linewidths=0.8, linestyles=["-", "--"],
-                           extent=EXTENT)
-            ax.set_title(title, fontsize=10)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.05, pad=0.03, label=r"$\mu$K")
-    fig.tight_layout()
-    fig.savefig(os.path.join(a.out, "real_bicep.pdf"), bbox_inches="tight")
-    plt.close(fig)
+        # outer edge of the field (1% of the peak weight) and half the peak weight
+        fields["bicep"] = (hp.ud_grade(w, a.nside, order_out="NESTED"), [0.01, 0.5], ["-", "--"])
+    for view in ("bicep", "actpol"):
+        weight, levels, styles = fields.get(view, (None, None, None))
+        field = None
+        if weight is not None:
+            field = project(weight, view).filled(0)
+            field /= field.max()
+            sel = weight > levels[0] * weight.max()
+            if gnilc:
+                rms = np.std  # about the mean of the field, as the paper quotes them
+                for f in ev:
+                    g, uf, df = gnilc[f][sel], u[f][sel], d[f][sel]
+                    print(f"{view} {f}: corr(u, G) {np.corrcoef(uf, g)[0, 1]:.3f} corr(d, G) "
+                          f"{np.corrcoef(df, g)[0, 1]:.3f} | rms u {rms(uf):.1f} G {rms(g):.1f} d {rms(df):.1f} "
+                          f"u-G {rms(uf - g):.1f} d-G {rms(df - g):.1f} d-u {rms(df - uf):.1f} uK", flush=True)
+        cols = 5 if gnilc else 4
+        wide = view == "actpol"  # a long strip: one row per panel, Q and U side by side
+        fig, axes = plt.subplots(cols, 2, figsize=(10, 2.1 * cols)) if wide else \
+            plt.subplots(2, cols, figsize=(3.3 * cols, 7.0))
+        for row, f in enumerate(("Q", "U")):
+            dust = project(u[f], view).filled(0)
+            inside = field > levels[0] if field is not None else np.ones(dust.shape, bool)
+            vs = np.percentile(np.abs(dust[inside]), 99.5)  # the scale of the dust in the field
+            vn = np.percentile(np.abs(half[f]), 99)
+            panels = [(d[f], f"PR3 map $d$ ({f})", vs), (u[f], f"denoised $u$ ({f})", vs)]
+            if gnilc:
+                panels.append((gnilc[f], f"GNILC ({f})", vs))
+            panels += [(res[f], f"$d-u$ ({f})", vn), (half[f], f"$(d_1-d_2)/2$ ({f})", vn)]
+            for ax, (m, title, v) in zip(axes[:, row] if wide else axes[row], panels):
+                im = ax.imshow(project(m, view), origin="lower", cmap="RdBu_r", vmin=-v, vmax=v, extent=extent(view))
+                if field is not None:
+                    ax.contour(field, levels=levels, colors="k", linewidths=0.8, linestyles=styles,
+                               extent=extent(view))
+                ax.set_title(title, fontsize=10)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                fig.colorbar(im, ax=ax, orientation="vertical" if wide else "horizontal", fraction=0.05,
+                             pad=0.02 if wide else 0.03, label=r"$\mu$K")
+        fig.tight_layout()
+        fig.savefig(os.path.join(a.out, f"real_{view}.pdf"), bbox_inches="tight")
+        plt.close(fig)
 
     # EE and BB over |b| > bcut.
     theta, _ = hp.pix2ang(a.nside, np.arange(12 * a.nside**2))
