@@ -72,6 +72,11 @@ runs)
         --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64
+    # the same with the spectrum term inside the trainer (STL-Dev-MPI commit 9be7aa0, the driver's default there)
+    STL=stl_cl sbatch $GPU_OPTS -J n256_ebqu_c16cl -o $RUNS/slurm.%j.log scripts/train_native.slurm n256_ebqu_c16cl \
+        --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
+        --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
+        --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64
     # spread between trainings: r256_native again with seeds 1-3 (seed 0 is r256_native)
     if [ -n "$GPU_OPTS" ]; then
         for s in 1 2 3; do
