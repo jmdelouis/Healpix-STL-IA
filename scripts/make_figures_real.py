@@ -1,6 +1,7 @@
 """Figures of a `train_denoise.py --real` run: the PR3 maps themselves denoised.
 
     python make_figures_real.py RUN_DIR DATA_DIR OUT_DIR [--nside 256 --sims 0-9]
+        [--gnilc DIR --field-mask bk14_mask_gal_n0512.fits]
 
 RUN_DIR holds eval_{Q,U}.npz (d, u); DATA_DIR the PR3 maps
 (planck353hm{1,2}_{Q,U}_n{nside}.npy) and the FFP10 simulations
@@ -22,6 +23,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 BICEP2 = (316.0, -58.5)  # galactic (l, b) of the centre of the BICEP2 field (RA 0h, Dec -57.5 deg)
+RESO, XSIZE = 6.0, 560  # gnomonic view of the field: 6 arcmin pixels, 56 deg wide
+EXTENT = [-XSIZE * RESO / 120, XSIZE * RESO / 120] * 2  # degrees from the centre
+
+
+def project(m):
+    """Gnomonic projection of the NESTED map m on the BICEP2 field."""
+    return hp.gnomview(m, nest=True, rot=BICEP2, reso=RESO, xsize=XSIZE, return_projected_map=True, no_plot=True)
 
 
 def id_range(text):
@@ -42,6 +50,8 @@ def main():
     p.add_argument("--bcut", type=float, default=30.0)
     p.add_argument("--apod", type=float, default=5.0)
     p.add_argument("--lmax", type=int, default=600)
+    p.add_argument("--gnilc", help="directory of gnilc353_{Q,U}_n{nside}.npy (scripts/prepare_gnilc.py)")
+    p.add_argument("--field-mask", help="BICEP/Keck field mask in galactic coordinates (bk14_mask_gal_n0512.fits)")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
     ev = {f: dict(np.load(os.path.join(a.run, f"eval_{f}.npz"))) for f in ("Q", "U")}
@@ -64,17 +74,36 @@ def main():
     fig.savefig(os.path.join(a.out, "real_maps.pdf"), bbox_inches="tight")
     plt.close(fig)
 
-    # BICEP2 field.
-    fig = plt.figure(figsize=(12.8, 7.2))
+    # BICEP2 field: d, u and (with --gnilc) the GNILC dust map on one linear scale, then d - u and the
+    # half-mission difference on the scale of the noise; the outline of the field with --field-mask.
+    gnilc = {f: np.load(os.path.join(a.gnilc, f"gnilc353_{f}_n{a.nside}.npy")) for f in ev} if a.gnilc else None
+    field = None
+    if a.field_mask:
+        w = np.nan_to_num(hp.read_map(a.field_mask))  # NaN outside the field
+        field = project(hp.ud_grade(w, a.nside, order_out="NESTED")).filled(0)
+        field /= field.max()
+    cols = 5 if gnilc else 4
+    fig, axes = plt.subplots(2, cols, figsize=(3.3 * cols, 7.0))
     for row, f in enumerate(("Q", "U")):
-        v = np.percentile(np.abs(half[f]), 99)
-        panels = [(d[f], f"PR3 map $d$ ({f})", dict(norm="hist")),
-                  (u[f], "denoised $u$", dict(norm="hist")),
-                  (res[f], "$d-u$", dict(min=-v, max=v)),
-                  (half[f], "$(d_1-d_2)/2$", dict(min=-v, max=v))]
-        for col, (m, title, kw) in enumerate(panels):
-            hp.gnomview(m, nest=True, rot=BICEP2, reso=6.0, xsize=320, fig=fig.number, sub=(2, 4, 4 * row + col + 1),
-                        title=title, cmap="RdBu_r", notext=True, unit=r"$\mu$K", **kw)
+        dust = project(u[f]).filled(0)
+        inside = field > 0.01 if field is not None else np.ones(dust.shape, bool)
+        vs = np.percentile(np.abs(dust[inside]), 99.5)  # the scale of the dust in the field
+        vn = np.percentile(np.abs(half[f]), 99)
+        panels = [(d[f], f"PR3 map $d$ ({f})", vs), (u[f], f"denoised $u$ ({f})", vs)]
+        if gnilc:
+            panels.append((gnilc[f], f"GNILC ({f})", vs))
+        panels += [(res[f], "$d-u$", vn), (half[f], "$(d_1-d_2)/2$", vn)]
+        for ax, (m, title, v) in zip(axes[row], panels):
+            im = ax.imshow(project(m), origin="lower", cmap="RdBu_r", vmin=-v, vmax=v, extent=EXTENT)
+            if field is not None:
+                # outer edge of the field (1% of the peak weight) and half the peak weight
+                ax.contour(field, levels=[0.01, 0.5], colors="k", linewidths=0.8, linestyles=["-", "--"],
+                           extent=EXTENT)
+            ax.set_title(title, fontsize=10)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.05, pad=0.03, label=r"$\mu$K")
+    fig.tight_layout()
     fig.savefig(os.path.join(a.out, "real_bicep.pdf"), bbox_inches="tight")
     plt.close(fig)
 
