@@ -39,10 +39,12 @@ sky)
     ;;
 apply)
     # the known-sky network applied to the truth plus the FFP10 simulations 1-9, and the errors against the truth
-    export STL=stl_cl; source scripts/env.sh   # the engine of the training (STL_NATIVE_LIBRARY, G)
-    $PY scripts/apply_native.py $RUNS/sim_d12_ebqu $R/sim_d12 $RUNS/sim_d12_ebqu/apply/u.npz --mcs 1-9
-    $PY scripts/eval_truth.py $R/sim_d12 $R/sim_d12 $RUNS/sim_d12_ebqu --maps $RUNS/sim_d12_ebqu/apply/u_mc*.npz \
-        | tee $RUNS/sim_d12_ebqu/eval_truth.txt
+    for b in stl_cl:sim_d12_ebqu stl_mem:sim_d12_ebqu_cl3n; do
+        export STL=${b%%:*}; run=${b#*:}; source scripts/env.sh   # the engine of the training (STL_NATIVE_LIBRARY, G)
+        $PY scripts/apply_native.py $RUNS/$run $R/sim_d12 $RUNS/$run/apply/u.npz --mcs 1-9
+        $PY scripts/eval_truth.py $R/sim_d12 $R/sim_d12 $RUNS/$run --maps $RUNS/$run/apply/u_mc*.npz \
+            | tee $RUNS/$run/eval_truth.txt
+    done
     ;;
 runs)
     # Sect. 3, Table 1: nside 64, white noise, auto loss
@@ -115,6 +117,12 @@ runs)
         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64 \
         --data $R/sim_d12
+    # the same with the spectrum term up to l = 3 nside - 1, the options of the reference n256_ebqu_c16_cl3n
+    STL=stl_mem sbatch $GPU_OPTS -J sim_d12_ebqu_cl3n -o $RUNS/slurm.%j.log scripts/train_native.slurm sim_d12_ebqu_cl3n \
+        --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
+        --cl-masks 0,30,45,60 --cl-lmax 767 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
+        --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64 \
+        --noise-pools host --mem-trace --data $R/sim_d12
     # the reference at nside 512 and 1024 (STL-Dev-MPI commit 9d0a00f: memory plan, host noise pools,
     # split live pairs), on the data of prepare_data_hires.slurm ($HIRES, default $R/data/maps_hi), with the memory trace
     STL=stl_mem sbatch -p gpu --gres=gpu:a100:1 -c 6 --mem=64G -t 36:00:00 -J n512_ebqu_c16 -o $RUNS/slurm.%j.log \
@@ -190,8 +198,8 @@ figures)
     $PY scripts/make_figures_real.py $RUNS/n512_ebqu_c16 ${HIRES:-$R/data/maps_hi} $RUNS/figs_n512 --nside 512 \
         --gnilc $E --field-mask $E/bk14_mask_gal_n0512.fits
     # the known-sky validation
-    $PY scripts/make_figures_sim.py $R/sim_d12 $RUNS/sim_d12_ebqu $RUNS/figs_sim_d12 \
-        --apply "$RUNS/sim_d12_ebqu/apply/u_mc*.npz"
+    $PY scripts/make_figures_sim.py $R/sim_d12 $RUNS/sim_d12_ebqu_cl3n $RUNS/figs_sim_d12 \
+        --apply "$RUNS/sim_d12_ebqu_cl3n/apply/u_mc*.npz"
     # figures of the earlier runs (history of the tests)
     $PY scripts/make_figures.py $RUNS $RUNS/figs64
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256

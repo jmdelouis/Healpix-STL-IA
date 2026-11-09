@@ -226,7 +226,7 @@ STL-Dev-MPI (driver `train_native_unet.py`, `scripts/train_native.slurm`), at th
 |---|---|---|
 | `stl_ebqu` | `596e3e9c7ef4c9af5007266dde8442f3e58e7fa8` | `n256_ebqu_c16`, the reference at nside 256 with the spectrum term up to l = 2 nside - 1 |
 | `stl_cl` | `9be7aa0a7e03bae80cdba6db841c4e0c47a1d694` | `n256_ebqu_c16cl` (spectrum term in the trainer), `sim_d12_ebqu` (known sky) |
-| `stl_mem` | `9d0a00fc8f476f70f64b6324d99cb0c334ef93a4` | `n256_ebqu_c16_cl3n`, the reference at nside 256 (spectrum term up to l = 3 nside - 1), `n512_ebqu_c16`, `n1024_ebqu_c16` (memory plan, host noise pools, `--mem-trace`) |
+| `stl_mem` | `9d0a00fc8f476f70f64b6324d99cb0c334ef93a4` | `n256_ebqu_c16_cl3n`, the reference at nside 256 (spectrum term up to l = 3 nside - 1), `sim_d12_ebqu_cl3n` (known sky, same options), `n512_ebqu_c16`, `n1024_ebqu_c16` (memory plan, host noise pools, `--mem-trace`) |
 
 ### 7.1 Engines
 
@@ -264,6 +264,7 @@ and after the correction `C(s)/C(d1xd2)` between 0.86 and 1.10 in every band.
 
 | run | `STL` | time (A100) | GPU memory | host memory | check: last `eval 3000` line |
 |---|---|---|---|---|---|
+| `sim_d12_ebqu_cl3n` (`--cl-lmax 767`) | `stl_mem` | 2 h 10 | < 40 GB | 48 GB | `Q err/noise 0.902 U err/noise 0.834` |
 | `sim_d12_ebqu` | `stl_cl` | 2 h 27 | < 40 GB | 48 GB | `Q err/noise 0.862 U err/noise 0.752` |
 | `n256_ebqu_c16_cl3n` (`--cl-lmax 767`) | `stl_mem` | 2 h 11 | < 40 GB | 48 GB | `Q err/noise 0.866 U err/noise 0.789` |
 | `n256_ebqu_c16` | `stl_ebqu` | 3 h 02 | < 40 GB | 48 GB | Q 0.81, U 0.75 |
@@ -277,11 +278,12 @@ The value is the rms of d - u over that of the noise. A rerun differs within the
 ### 7.4 Known sky: other noises
 
 ```bash
-bash scripts/reproduce.sh apply     # on a GPU node, after sim_d12_ebqu
+bash scripts/reproduce.sh apply     # on a GPU node, after sim_d12_ebqu and sim_d12_ebqu_cl3n
 ```
 
-**Check:** `$RUNS/sim_d12_ebqu/eval_truth.txt` gives, for every `u_mc*.npz`, `u-s rms/noise by |b|` close to
-`0.985 0.726 0.581 0.421 0.369`, and the EE and BB ratios of Table 3 of the paper.
+**Check:** `$RUNS/sim_d12_ebqu_cl3n/eval_truth.txt` gives, for every `u_mc*.npz`, `u-s rms/noise by |b|` close to
+`0.976 0.679 0.547 0.387 0.323`, and, averaged over the nine `u_mc*.npz`, the EE and BB ratios of Table 2 of the
+paper (`0.985 0.726 0.581 0.421 0.369` for `sim_d12_ebqu`, the spectrum term up to l = 2 nside - 1).
 
 ### 7.5 Figures
 
