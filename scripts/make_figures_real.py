@@ -66,10 +66,11 @@ def main():
     p.add_argument("--sims", default="0-9")
     p.add_argument("--bcut", type=float, default=30.0)
     p.add_argument("--apod", type=float, default=5.0)
-    p.add_argument("--lmax", type=int, default=600)
+    p.add_argument("--lmax", type=int, default=None, help="default 3 nside - 1")
     p.add_argument("--gnilc", help="directory of gnilc353_{Q,U}_n{nside}.npy (scripts/prepare_gnilc.py)")
     p.add_argument("--field-mask", help="BICEP/Keck field mask in galactic coordinates (bk14_mask_gal_n0512.fits)")
     a = p.parse_args()
+    a.lmax = a.lmax or 3 * a.nside - 1
     os.makedirs(a.out, exist_ok=True)
     ev = {f: dict(np.load(os.path.join(a.run, f"eval_{f}.npz"))) for f in ("Q", "U")}
     d = {f: ev[f]["d"] for f in ev}

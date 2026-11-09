@@ -29,8 +29,9 @@ def main():
     p.add_argument("--mc", type=int, default=0)
     p.add_argument("--apply", default=None, help="glob of apply_native.py outputs (Q, U, mc) on other noises")
     p.add_argument("--apod", type=float, default=5.0)
-    p.add_argument("--lmax", type=int, default=600)
+    p.add_argument("--lmax", type=int, default=None, help="default 3 nside - 1")
     a = p.parse_args()
+    a.lmax = a.lmax or 3 * a.nside - 1
     os.makedirs(a.out, exist_ok=True)
     n = a.nside
     qu = ("Q", "U")

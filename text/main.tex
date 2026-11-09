@@ -121,7 +121,7 @@ $S_2$ is bilinear. $S_3$ is linear in the map outside the modulus. $S_1$ and $S_
 \begin{equation}
   L_{\rm cl}:\ C_b(m\,d_1,m\,d_2)\ \text{vs}\ C_b(m\,u,m\,u),
 \end{equation}
-for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$, $45^\circ$ and $60^\circ$ (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$, each weighted by the Gaussian variance of the target. The two half-mission noises are independent, so $\langle C_b(u+\tilde n_1,u+\tilde n_2)\rangle=C_b(u,u)$: the model has no noise term and no noise bias. The spectra are those of the E and B maps, so that EE and BB are constrained separately, and come with their gradient from the differentiable \texttt{anafast} of STL-Dev-MPI.
+for galactic masks $m$ with $|b|>0^\circ$, $30^\circ$, $45^\circ$ and $60^\circ$ (apodised by $5^\circ$), where $C_b$ is the pseudo-spectrum of the masked maps divided by the mean of the squared mask, in bins of $\Delta\ell=30$ from $\ell=10$ to $2\nside-1$, each weighted by the Gaussian variance of the target. The two half-mission noises are independent, so $\langle C_b(u+\tilde n_1,u+\tilde n_2)\rangle=C_b(u,u)$: the model has no noise term and no noise bias. The spectra are those of the E and B maps, so that EE and BB are constrained separately, and come with their gradient from the differentiable \texttt{anafast} of STL-Dev-MPI.
 
 \paragraph{Conditioning.} The network can only infer the local signal-to-noise ratio from $d$. We give it two further maps, standardised: $\log I_{857}$, the dust intensity, and the log of the local noise rms, $\tfrac12\log\langle(n_Q^2+n_U^2)/2\rangle$ over the training simulations, set by the scanning strategy. They are concatenated to the input and, averaged down the pyramid, to the input of every decoder level. Since the 857\,GHz map is also the template of $L_3$, the residual $d-u$ must be checked to remain uncorrelated with it.
 
@@ -149,7 +149,7 @@ Before the PR3 maps, whose true sky is unknown, we test the method where the err
 \begin{figure*}
   \centering
   \figfile{sim_spectra.pdf}{0.8\textwidth}
-  \caption{Validation on a known sky: EE (left) and BB (right) spectra over $|b|>30^\circ$ (top) and $|b|>60^\circ$ (bottom), apodised by $5^\circ$: the truth $s$, the observation $d$, the denoised map $u$, the error $u-s$, the noise $n=d-s$, and the mean spectrum of the error when the same network is applied to $s+n_k$ for the nine noise simulations $k=1$--9 not used in training (dotted).}
+  \caption{Validation on a known sky: EE (left) and BB (right) spectra over $|b|>30^\circ$ (top) and $|b|>60^\circ$ (bottom), apodised by $5^\circ$: the truth $s$, the observation $d$, the denoised map $u$, the error $u-s$, the noise $n=d-s$, and the mean spectrum of the error when the same network is applied to $s+n_k$ for the nine noise simulations $k=1$--9 not used in training (dotted), up to $\ell=3\nside-1$.}
   \label{fig:sim_spectra}
 \end{figure*}
 
@@ -210,7 +210,7 @@ Before the PR3 maps, whose true sky is unknown, we test the method where the err
 \begin{figure*}
   \centering
   \figfile{ref_spectra.pdf}{0.8\textwidth}
-  \caption{EE (left) and BB (right) pseudo-spectra over $|b|>30^\circ$ (mask apodised by a $5^\circ$ Gaussian) of the PR3 map $d$, of its half-mission cross spectrum $d_1\times d_2$ (no noise bias), of the denoised map $u$ of the reference network, of the removed part $d-u$, of the half-mission difference and of the mean of ten FFP10 noise simulations.}
+  \caption{EE (left) and BB (right) pseudo-spectra over $|b|>30^\circ$ (mask apodised by a $5^\circ$ Gaussian) of the PR3 map $d$, of its half-mission cross spectrum $d_1\times d_2$ (no noise bias), of the denoised map $u$ of the reference network, of the removed part $d-u$, of the half-mission difference and of the mean of ten FFP10 noise simulations, up to $\ell=3\nside-1$. Above $\ell=2\nside$, outside the range of $L_{\rm cl}$, the spectra of $u$ rise above the cross spectrum.}
   \label{fig:real_spectra}
 \end{figure*}
 
@@ -350,21 +350,29 @@ The scattering statistics are computed with STL-Dev-MPI \citep{stldev}; maps are
 \begin{appendix}
 \section{Reproducing the runs}\label{app:repro}
 
-Every run, figure and table of this paper can be rebuilt from public data on any Linux machine with an NVIDIA GPU; the step-by-step recipe, with a check after every step and the pitfalls we met, is \texttt{REPRODUCE.md} in the repository of this paper (\texttt{jmdelouis/Healpix-STL-IA}). It is written so that it can be followed without knowledge of our cluster, by a person or by an automated agent. We summarise it here.
+Every map, figure and table of this paper can be rebuilt from public data on a Linux machine with an NVIDIA GPU (80\,GB for $\nside=1024$, 48\,GB for 512, 16\,GB for 256), with the repository of this paper (\texttt{jmdelouis/Healpix-STL-IA}) and \texttt{REPRODUCE.md}, the step-by-step version of this recipe with a check after every step.
 
-\paragraph{Code.} This repository (network, training, figures) and STL-Dev-MPI \citep{stldev}, public. The runs use several commits of the engine (masked statistics, spectra, spin-2 statistics, native U-Net, E/B transform on the GPU), and \texttt{REPRODUCE.md} and \texttt{scripts/reproduce.sh} give the commit and build directory of each. The scattering engine is the Rust library \texttt{stl-bridge}, built with \texttt{cargo build --release -p stl-bridge --features gpu} (Rust stable, 1.99.1 here; no MPI needed), called from Python through \texttt{stl\_port.native}.
+\paragraph{Code.} This repository (scripts, figures, paper) and STL-Dev-MPI \citep{stldev}, both public. The maps of this paper come from the native U-Net of STL-Dev-MPI and its driver \texttt{train\_native\_unet.py}, at three commits, each checked out and built in its own directory \texttt{\$R/\$STL}:
+\begin{itemize}
+  \item \texttt{596e3e9c7ef4} (\texttt{STL=stl\_ebqu}): the reference at $\nside=256$, \texttt{n256\_ebqu\_c16};
+  \item \texttt{9be7aa0a7e03} (\texttt{STL=stl\_cl}): the spectrum term inside the trainer, for the second training \texttt{n256\_ebqu\_c16cl} and the known-sky training \texttt{sim\_d12\_ebqu};
+  \item \texttt{9d0a00fc8f47} (\texttt{STL=stl\_mem}): the memory plan of Sect.~\ref{sec:native}, for $\nside=512$ and 1024.
+\end{itemize}
+The engine is the Rust library \texttt{stl-bridge}, built with \texttt{cargo build --release -p stl-bridge --features gpu} (Rust stable; no MPI) by \texttt{scripts/build\_bridge.slurm}, and called from Python through \texttt{stl\_port.native}.
 
-\paragraph{Environment.} Python 3.11 with PyTorch 2.11 (CUDA 12.8 build), NumPy 2.4, SciPy 1.17, healpy 1.20 and Matplotlib 3.11; at run time the GPU engine compiles its kernels with NVRTC, which must match the driver (\texttt{CUDARC\_CUDA\_VERSION} at build time, e.g.\ 13000 for CUDA 13.0). One work directory \texttt{\$R} holds the repository, the STL-Dev-MPI checkout and its build, the data and the runs. The machine is described by a handful of variables (\texttt{R}, the Python interpreter, a site file for modules, and the Slurm options of a one-GPU job and of a 32-core job, empty to run without Slurm) read by \texttt{scripts/env.sh}; those of our runs (Datarmor, Ifremer: A100 80\,GB GPUs; tests on a T4 16\,GB) are \texttt{scripts/hpc\_env.sh}.
+\paragraph{Environment.} Python 3.11 with NumPy 2.4, SciPy 1.17, healpy 1.20 and Matplotlib 3.11; PyTorch is only needed to write \texttt{model.pt}. At run time the GPU engine compiles its kernels with NVRTC, which must match the driver (\texttt{CUDARC\_CUDA\_VERSION}, e.g.\ 13000 for CUDA 13.0). PySM~3.4.6 is installed in a separate environment (\texttt{\$R/pysm\_env}, with the system packages), whose interpreter is \texttt{\$PYSM\_PY}. One work directory \texttt{\$R} holds the repository (\texttt{\$R/src}), the engine builds, the data and the runs (\texttt{\$RUNS}, default \texttt{\$R/runs}); \texttt{scripts/env.sh} reads it, with the Python interpreter, a site file and the Slurm options of a one-GPU and of a CPU job. Ours (Datarmor, Ifremer, A100 80\,GB) are in \texttt{scripts/hpc\_env.sh}.
 
-\paragraph{Pipeline.} From \texttt{\$R/src}, after \texttt{source scripts/env.sh}:
+\paragraph{Recipe.} From \texttt{\$R/src}, after \texttt{source scripts/env.sh}:
 \begin{enumerate}
-  \item \texttt{scripts/build\_bridge.slurm}: build of the engine (10\,min);
-  \item \texttt{scripts/download\_planck.sh 50}: the PR3 353\,GHz PSB full- and half-mission maps, the 857\,GHz map, and 50 FFP10 noise simulations of each of the three 353\,GHz maps from the Planck Legacy Archive (60\,GB);
-  \item \texttt{scripts/prepare\_data.slurm}: NESTED parent means at $\nside=256$, 128 and 64, in $\mu{\rm K}_{\rm CMB}$ (3\,h on 4 cores);
-  \item \texttt{scripts/reproduce.sh runs}: every run of Sect.~\ref{sec:history} and the reference (\texttt{n256\_ebqu\_c16}), each with its exact options (seed 0; 3000 steps for the networks, 10 rounds of 50 iterations for L-BFGS; 10\,min per $\nside=64$ run and 1 to 8\,h per $\nside=256$ run on one A100);
-  \item \texttt{scripts/reproduce.sh figures}: all figures and tables.
+  \item for each \texttt{STL} above: \texttt{git clone} STL-Dev-MPI into \texttt{\$R/\$STL/src}, \texttt{git checkout} its commit, and \texttt{scripts/build\_bridge.slurm} (10\,min);
+  \item \texttt{scripts/download\_planck.sh 50}: the PR3 353\,GHz PSB full- and half-mission maps, the 857\,GHz map and 50 FFP10 noise simulations of each 353\,GHz map (60\,GB); \texttt{scripts/download\_ext.sh}: the GNILC dust map and the BK14 mask (1.6\,GB);
+  \item \texttt{scripts/prepare\_data.slurm}: NESTED parent means at $\nside=256$, 128 and 64, in $\mu{\rm K}_{\rm CMB}$ (3\,h on 4 cores); \texttt{scripts/prepare\_data\_hires.slurm}: the same at 512 and 1024 (55\,GB);
+  \item \texttt{scripts/reproduce.sh sky}: the PySM \texttt{d12} sky at $\nside=256$, 512 and 1024 (2\,min, 96\,GB of memory; 5.7\,GB of templates downloaded at first use) and the mock observation of Sect.~\ref{sec:sim} (its log gives the EE and BB gains 1.66 and 1.64 at $\ell=100$);
+  \item \texttt{scripts/reproduce.sh runs}: every training, each a Slurm job with its exact options (seed 0, 3000 Adam steps): \texttt{sim\_d12\_ebqu} (2\,h\,27 on an A100), \texttt{n256\_ebqu\_c16} (3\,h\,02), \texttt{n256\_ebqu\_c16cl} (2\,h\,25), \texttt{n512\_ebqu\_c16} (7\,h\,49, 48\,GB of GPU memory, \texttt{--mem=64G}), \texttt{n1024\_ebqu\_c16} (\texttt{--mem=160G}), and the runs of Sect.~\ref{sec:history};
+  \item \texttt{scripts/reproduce.sh apply}: the known-sky network applied to the nine other noise simulations and its errors against the truth (Table~\ref{tab:sim});
+  \item \texttt{scripts/reproduce.sh figures}: the GNILC maps at $\nside=256$ and 512, and every figure, with the spectra up to $\ell=3\nside-1$.
 \end{enumerate}
-Each run writes its arguments, loss history and evaluations to \texttt{train.json}. The GPU runs are not bit-reproducible (atomic sums); a rerun differs within the spread between trainings of Sect.~\ref{sec:results}. A five-minute smoke test (Sect.~4 of the recipe) checks the installation before the long runs; the environment, the engine and the smoke test of the recipe were replayed in a fresh directory on the T4 test machine.
+Each training writes its options, loss history, evaluations and memory trace to \texttt{train.json}, its parameters to \texttt{params.npy} and its maps $d$ and $u$ to \texttt{eval\_\{Q,U\}.npz}. The final evaluation line of the log checks a rerun: $\sigma_{d-u}/\sigma_n$ of 0.81 ($Q$) and 0.75 ($U$) for \texttt{n256\_ebqu\_c16}, 0.86 and 0.85 for \texttt{n512\_ebqu\_c16}. The GPU runs are not bit-reproducible (atomic sums), and two trainings end on maps that differ within the spread of Sect.~\ref{sec:results}; the maps of the figures are those of the published runs. \texttt{REPRODUCE.md} in the repository gives every command with its check and the pitfalls we met.
 \section{The reference at $\nside=512$}\label{app:n512}
 
 Figures~\ref{fig:n512_bicep} to \ref{fig:n512_spectra} repeat Figs.~\ref{fig:real_bicep}, \ref{fig:real_actpol}, \ref{fig:real_maps} and \ref{fig:real_spectra} for the reference trained at $\nside=512$ (Sect.~\ref{sec:n512}), with the same options, scales and contours. At this resolution the correlation of $u$ with the GNILC dust map, which is smoothed to about $60'$, is lower than at $\nside=256$ (0.88 and 0.82 in the BICEP2 field, 0.82 and 0.69 in the ACTPol D56 field), since $u$ keeps the small scales that GNILC removes; averaged to $\nside=256$, it is that of the $\nside=256$ reference.

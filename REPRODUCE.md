@@ -16,9 +16,9 @@ endings (LF).
 
 | | used for the paper | minimum |
 |---|---|---|
-| GPU | NVIDIA A100 80 GB (Datarmor, Ifremer); T4 16 GB for tests | 40 GB for nside 256 full-sky runs, 16 GB for nside 64 |
+| GPU | NVIDIA A100 80 GB (Datarmor, Ifremer); T4 16 GB for tests | native U-Net: 16 GB for nside 256, 48 GB for 512, 80 GB for 1024; PyTorch runs: 40 GB for nside 256 |
 | CPU node | 32 cores, 128 GB (CPU disc engine, `p256_l123`) | same; or use the GPU disc engine |
-| disk | 80 GB (60 GB downloads, 15 GB maps, 5 GB runs) | |
+| disk | 150 GB (60 GB downloads, 15 GB maps, 55 GB maps at nside 512/1024, 2 GB external maps and known sky, 10 GB runs) | |
 | Rust | 1.99.1 (rustup, stable) | stable toolchain, edition 2021 |
 | CUDA | driver 13.0 + NVRTC 13.0 (A100); driver 11.4 + NVRTC 11.8 wheel (T4) | driver >= 11.4, a matching `libnvrtc` on `LD_LIBRARY_PATH` |
 | Python | 3.11.18, torch 2.11.0+cu128, numpy 2.4.6, scipy 1.17.1, healpy 1.20.1, matplotlib 3.11.2 | 3.10+, torch with CUDA |
@@ -217,9 +217,93 @@ bash scripts/reproduce.sh figures
 
 This writes `$R/runs/figs64` (Figs. 1-6 and `results_table.tex`), `$R/runs/figs256` (Figs. 7-8 and `results256_table.tex`) and `$R/runs/figs_real`. Copy them to `text/figures/` and compile `text/main.tex` with `latexmk -pdf`.
 
+## 7. The maps of the paper: known sky, reference, nside 512 and 1024
+
+Sections 1-6 rebuild the history of the tests. The maps shown in the paper come from the native U-Net of
+STL-Dev-MPI (driver `train_native_unet.py`, `scripts/train_native.slurm`), at three commits:
+
+| `STL` | commit | runs |
+|---|---|---|
+| `stl_ebqu` | `596e3e9c7ef4c9af5007266dde8442f3e58e7fa8` | `n256_ebqu_c16`, the reference at nside 256 |
+| `stl_cl` | `9be7aa0a7e03bae80cdba6db841c4e0c47a1d694` | `n256_ebqu_c16cl` (spectrum term in the trainer), `sim_d12_ebqu` (known sky) |
+| `stl_mem` | `9d0a00fc8f476f70f64b6324d99cb0c334ef93a4` | `n512_ebqu_c16`, `n1024_ebqu_c16` (memory plan, host noise pools, `--mem-trace`) |
+
+### 7.1 Engines
+
+```bash
+for b in stl_ebqu:596e3e9c7ef4c9af5007266dde8442f3e58e7fa8 stl_cl:9be7aa0a7e03bae80cdba6db841c4e0c47a1d694 \
+         stl_mem:9d0a00fc8f476f70f64b6324d99cb0c334ef93a4; do
+    git clone https://github.com/jmdelouis/STL-Dev-MPI $R/${b%%:*}/src
+    git -C $R/${b%%:*}/src checkout ${b##*:}
+    STL=${b%%:*} sbatch $CPU_OPTS -o $RUNS/slurm.%j.log scripts/build_bridge.slurm
+done
+```
+
+**Check:** `$R/stl_{ebqu,cl,mem}/target/release/libstl_bridge.so` exist.
+
+### 7.2 Data
+
+```bash
+bash scripts/download_ext.sh                                                   # GNILC 353 GHz and the BK14 mask, 1.6 GB
+sbatch $CPU_OPTS -o $RUNS/slurm.%j.log scripts/prepare_data_hires.slurm       # nside 512 and 1024, 55 GB, $R/data/maps_hi
+python3 -m venv --system-site-packages $R/pysm_env && $R/pysm_env/bin/pip install pysm3==3.4.6
+PYSM_PY=$R/pysm_env/bin/python sbatch -p <cpu> -c 8 --mem=96G -t 6:00:00 -o $RUNS/slurm.%j.log --wrap "bash scripts/reproduce.sh sky"
+```
+
+`reproduce.sh sky` writes the PySM d12 sky (`$R/sky_d12`, 2 min; the 5.7 GB of templates go to `~/.astropy/cache`
+at first use) and the mock observation (`$R/sim_d12`: truth, d = truth + FFP10 simulation 0, links to the other files of `$R/data/maps`).
+Put `HIRES=...` in the environment if the nside 512/1024 maps are not in `$R/data/maps_hi`.
+
+**Check:** `$R/data/ext` holds the GNILC map and `bk14_mask_gal_n0512.fits`; `$R/data/maps_hi` holds 938 files;
+the `sky` log prints `E: amplitude gain 1.663 at l=100, slope +0.082` and `B: amplitude gain 1.640 at l=100, slope +0.068`,
+and after the correction `C(s)/C(d1xd2)` between 0.86 and 1.10 in every band.
+
+### 7.3 Trainings
+
+`bash scripts/reproduce.sh runs` submits them with the other runs (one A100 each):
+
+| run | `STL` | time (A100) | GPU memory | host memory | check: last `eval 3000` line |
+|---|---|---|---|---|---|
+| `sim_d12_ebqu` | `stl_cl` | 2 h 27 | < 40 GB | 48 GB | `Q err/noise 0.862 U err/noise 0.752` |
+| `n256_ebqu_c16` | `stl_ebqu` | 3 h 02 | < 40 GB | 48 GB | Q 0.81, U 0.75 |
+| `n256_ebqu_c16cl` | `stl_cl` | 2 h 25 | < 40 GB | 48 GB | Q 0.80, U 0.78 |
+| `n512_ebqu_c16` | `stl_mem` | 7 h 49 | 48.4 GB | 64 GB | `Q err/noise 0.860 U err/noise 0.846` |
+| `n1024_ebqu_c16` | `stl_mem` | not yet measured | about 50 GB (estimate) | 160 GB | |
+
+The value is the rms of d - u over that of the noise. A rerun differs within the spread between trainings
+(about 0.02), since the GPU sums are not bit-reproducible.
+
+### 7.4 Known sky: other noises
+
+```bash
+bash scripts/reproduce.sh apply     # on a GPU node, after sim_d12_ebqu
+```
+
+**Check:** `$RUNS/sim_d12_ebqu/eval_truth.txt` gives, for every `u_mc*.npz`, `u-s rms/noise by |b|` close to
+`0.985 0.726 0.581 0.421 0.369`, and the EE and BB ratios of Table 3 of the paper.
+
+### 7.5 Figures
+
+```bash
+bash scripts/reproduce.sh figures
+```
+
+The spectra go up to l = 3 nside - 1. Copy into `text/figures/`:
+
+| written by `reproduce.sh figures` | paper |
+|---|---|
+| `$RUNS/figs_sim_d12/sim_{maps,spectra}.pdf` | `sim_{maps,spectra}.pdf` |
+| `$RUNS/figs_ref/real_{bicep,actpol,maps,spectra}.pdf` | `ref_{bicep,actpol,maps,spectra}.pdf` |
+| `$RUNS/figs_n512/real_{bicep,actpol,maps,spectra}.pdf` | `n512_{bicep,actpol,maps,spectra}.pdf` |
+
+`make_figures_real.py` also prints, for each field, the correlation and rms of u and d against GNILC
+(BICEP2 field at nside 256: `corr(u, G) 0.946` in Q, `0.933` in U).
+
 ## Pitfalls met while making the paper
 
 - **Line endings.** A script edited on Windows and copied with CRLF line endings breaks bash (`$'\r': command not found`). Fix it with `sed -i 's/\r$//' scripts/*.sh scripts/*.slurm`.
 - **Full work file system.** When the file system of `$R` is full, `torch.save` fails (`iostream error`), the run stops at its first checkpoint, and the Slurm log stays empty. Check with `dd if=/dev/zero of=$R/x bs=1M count=100 conv=fsync`. Then set `RUNS` to another file system (the outputs are about 40 MB per run). Since this happened, `model.pt` is written to a temporary file and renamed.
 - **GPU memory.** The GPU disc engine reserves half of the free GPU memory for its geometry cache when it starts. On a GPU shared with the network, give `--cache-bytes` explicitly.
+- **Home quota.** On Datarmor, `$HOME` has a quota of about 100 GB: a job that fills it fails at its first write with an empty log. The nside 512/1024 data, the known sky and the runs were written to `/work` (`RUNS=/work/...`, `HIRES=...`).
+- **Long command lines.** Pasting a script through a shell that joins lines can replace `\` + newline by spaces; the command still runs, but check `bash -n scripts/reproduce.sh` after editing.
 - **Mock sky.** In Sects. 3-4 the "clean sky" `s` of the evaluation is the PR3 map itself, which contains the Planck noise. Pixel errors and maps there compare losses, not the quality of a denoised dust map. The PR3 maps denoised (`--real`) are the actual test.
