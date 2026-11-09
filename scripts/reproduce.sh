@@ -103,6 +103,12 @@ runs)
         --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64
+    # the reference: the same with the spectrum term up to l = 3 nside - 1 (STL-Dev-MPI commit 9d0a00f)
+    STL=stl_mem sbatch $GPU_OPTS -J n256_ebqu_c16_cl3n -o $RUNS/slurm.%j.log scripts/train_native.slurm n256_ebqu_c16_cl3n \
+        --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
+        --cl-masks 0,30,45,60 --cl-lmax 767 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
+        --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64 \
+        --noise-pools host --mem-trace
     # the reference on the known sky (reproduce.sh sky first), same options and code as n256_ebqu_c16cl
     STL=stl_cl sbatch $GPU_OPTS -J sim_d12_ebqu -o $RUNS/slurm.%j.log scripts/train_native.slurm sim_d12_ebqu \
         --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
@@ -177,7 +183,7 @@ figures)
     # (GNILC from the Planck Legacy Archive or IRSA, bk14_mask_gal_n0512.fits from bicepkeck.org, in $R/data/ext)
     E=$R/data/ext
     $PY scripts/prepare_gnilc.py $E/COM_CompMap_IQU-thermaldust-gnilc-varres_2048_R3.00.fits $E
-    $PY scripts/make_figures_real.py $RUNS/n256_ebqu_c16 $R/data/maps $RUNS/figs_ref --gnilc $E \
+    $PY scripts/make_figures_real.py $RUNS/n256_ebqu_c16_cl3n $R/data/maps $RUNS/figs_ref --gnilc $E \
         --field-mask $E/bk14_mask_gal_n0512.fits
     # the same at nside 512 (appendix), with GNILC at nside 512
     $PY scripts/prepare_gnilc.py $E/COM_CompMap_IQU-thermaldust-gnilc-varres_2048_R3.00.fits $E --nside 512

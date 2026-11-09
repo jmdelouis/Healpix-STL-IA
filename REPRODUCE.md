@@ -224,9 +224,9 @@ STL-Dev-MPI (driver `train_native_unet.py`, `scripts/train_native.slurm`), at th
 
 | `STL` | commit | runs |
 |---|---|---|
-| `stl_ebqu` | `596e3e9c7ef4c9af5007266dde8442f3e58e7fa8` | `n256_ebqu_c16`, the reference at nside 256 |
+| `stl_ebqu` | `596e3e9c7ef4c9af5007266dde8442f3e58e7fa8` | `n256_ebqu_c16`, the reference at nside 256 with the spectrum term up to l = 2 nside - 1 |
 | `stl_cl` | `9be7aa0a7e03bae80cdba6db841c4e0c47a1d694` | `n256_ebqu_c16cl` (spectrum term in the trainer), `sim_d12_ebqu` (known sky) |
-| `stl_mem` | `9d0a00fc8f476f70f64b6324d99cb0c334ef93a4` | `n512_ebqu_c16`, `n1024_ebqu_c16` (memory plan, host noise pools, `--mem-trace`) |
+| `stl_mem` | `9d0a00fc8f476f70f64b6324d99cb0c334ef93a4` | `n256_ebqu_c16_cl3n`, the reference at nside 256 (spectrum term up to l = 3 nside - 1), `n512_ebqu_c16`, `n1024_ebqu_c16` (memory plan, host noise pools, `--mem-trace`) |
 
 ### 7.1 Engines
 
@@ -265,6 +265,7 @@ and after the correction `C(s)/C(d1xd2)` between 0.86 and 1.10 in every band.
 | run | `STL` | time (A100) | GPU memory | host memory | check: last `eval 3000` line |
 |---|---|---|---|---|---|
 | `sim_d12_ebqu` | `stl_cl` | 2 h 27 | < 40 GB | 48 GB | `Q err/noise 0.862 U err/noise 0.752` |
+| `n256_ebqu_c16_cl3n` (`--cl-lmax 767`) | `stl_mem` | 2 h 11 | < 40 GB | 48 GB | `Q err/noise 0.866 U err/noise 0.789` |
 | `n256_ebqu_c16` | `stl_ebqu` | 3 h 02 | < 40 GB | 48 GB | Q 0.81, U 0.75 |
 | `n256_ebqu_c16cl` | `stl_cl` | 2 h 25 | < 40 GB | 48 GB | Q 0.80, U 0.78 |
 | `n512_ebqu_c16` | `stl_mem` | 7 h 49 | 48.4 GB | 64 GB | `Q err/noise 0.860 U err/noise 0.846` |
@@ -297,7 +298,7 @@ The spectra go up to l = 3 nside - 1. Copy into `text/figures/`:
 | `$RUNS/figs_n512/real_{bicep,actpol,maps,spectra}.pdf` | `n512_{bicep,actpol,maps,spectra}.pdf` |
 
 `make_figures_real.py` also prints, for each field, the correlation and rms of u and d against GNILC
-(BICEP2 field at nside 256: `corr(u, G) 0.946` in Q, `0.933` in U).
+(BICEP2 field at nside 256: `corr(u, G) 0.946` in Q, `0.943` in U).
 
 ## Pitfalls met while making the paper
 
