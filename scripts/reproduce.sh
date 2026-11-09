@@ -77,6 +77,10 @@ runs)
         --nside 256 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu --channels 16,32,48,64,64,64
+    # the reference at nside 512 and 1024 (STL-Dev-MPI commit 9d0a00f: memory plan, host noise pools,
+    # split live pairs), on the data of prepare_data_hires.slurm ($HIRES, default $R/data/maps_hi), with the memory trace
+    STL=stl_mem sbatch -p gpu --gres=gpu:a100:1 -c 6 --mem=64G -t 36:00:00 -J n512_ebqu_c16 -o $RUNS/slurm.%j.log         scripts/train_native.slurm n512_ebqu_c16         --nside 512 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu         --channels 16,32,48,64,64,64,64 --noise-pools host --mem-trace --data ${HIRES:-$R/data/maps_hi}
+    STL=stl_mem sbatch -p gpu --gres=gpu:a100:1 -c 6 --mem=160G -t 96:00:00 -J n1024_ebqu_c16 -o $RUNS/slurm.%j.log         scripts/train_native.slurm n1024_ebqu_c16         --nside 1024 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu         --channels 16,32,48,64,64,64,64,64 --noise-pools host --live-batch 4 --bias-batch 2 --mem-trace --data ${HIRES:-$R/data/maps_hi}
     # spread between trainings: r256_native again with seeds 1-3 (seed 0 is r256_native)
     if [ -n "$GPU_OPTS" ]; then
         for s in 1 2 3; do
