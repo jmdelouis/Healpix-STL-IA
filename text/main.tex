@@ -249,7 +249,7 @@ Before the PR3 maps, whose true sky is unknown, we test the method where the err
 
 \paragraph{The spread between trainings.} Two trainings with the same loss do not end on the same map. The native and PyTorch networks, which compute the same loss and gradient to $10^{-7}$ step by step, trained with the same options (frozen biases, without $L_{\rm cl}$), give maps that differ by 0.67 ($Q$) and 0.53 ($U$) times the noise rms, and removed parts with a correlation coefficient of only 0.70 and 0.76. The difference comes from the training itself: other noise draws, the order of floating-point operations, and a loss that does not determine $u$ uniquely. With $L_{\rm cl}$ and the terms on the E and B maps, a second seed changes the ratios of Table~\ref{tab:real} by at most 0.02 over $|b|>30^\circ$ and 0.03 over $|b|>60^\circ$ (PyTorch, 1000 steps). The reference itself was trained twice, with the spectrum term computed through Python and inside the engine: the two agree to $3\times10^{-15}$ on the value and $10^{-7}$ on the gradient, and the trajectories part after a few steps. The second training removes 0.80 ($Q$) and 0.78 ($U$) times the noise rms (0.32 in $P$), its ratios over $|b|>30^\circ$ differ from those of Table~\ref{tab:real} by at most 0.02, and over $|b|>60^\circ$ by at most 0.05. Only the largest scales move more: the EE spectrum of $d-u$ is 1.14 times the noise for $10\le\ell<30$, against 0.86, a range with few modes. Differences of a few per cent between single runs are within this spread. Several trainings per configuration are needed to quote errors, and their mean is itself a better estimate of $u$.
 
-\paragraph{Resolution $\nside=512$.}\label{sec:n512} The reference trained at $\nside=512$ (PR3 maps and FFP10 simulations at $\nside=512$, one more level of the U-Net, the same options otherwise) removes 0.86 ($Q$) and 0.85 ($U$) times the noise rms, against 0.81 and 0.75 at $\nside=256$: the extra pixels carry mostly noise. Over $|b|>30^\circ$ its EE and BB spectra follow the cross spectrum as at $\nside=256$, to 3\% up to $\ell=300$ and 0.94/0.96 for $300\le\ell<450$ (Table~\ref{tab:real}). Over $|b|>60^\circ$ they are lower for $200\le\ell<450$ (0.86/0.73 and 0.84), and the BB excess for $300\le\ell<450$ is 1.13 instead of 1.56. At large scales the removed part is closer to the noise (0.95 of its EE spectrum for $30\le\ell<60$, against 0.71). Averaged to $\nside=256$, the $\nside=512$ map has the same correlation with the GNILC dust map as the $\nside=256$ reference: 0.95 and 0.92 in the BICEP2 field, 0.89 and 0.82 in the ACTPol D56 field, with an rms of $u-{\rm GNILC}$ of 6.9 and 7.3\,$\mu$K in the BICEP2 field.
+\paragraph{Resolution $\nside=512$.}\label{sec:n512} The reference trained at $\nside=512$ (PR3 maps and FFP10 simulations at $\nside=512$, one more level of the U-Net, the same options otherwise) removes 0.86 ($Q$) and 0.85 ($U$) times the noise rms, against 0.81 and 0.75 at $\nside=256$: the extra pixels carry mostly noise. Over $|b|>30^\circ$ its EE and BB spectra follow the cross spectrum as at $\nside=256$, to 3\% up to $\ell=300$ and 0.94/0.96 for $300\le\ell<450$ (Table~\ref{tab:real}). Over $|b|>60^\circ$ they are lower for $200\le\ell<450$ (0.86/0.73 and 0.84), and the BB excess for $300\le\ell<450$ is 1.13 instead of 1.56. At large scales the removed part is closer to the noise (0.95 of its EE spectrum for $30\le\ell<60$, against 0.71). Averaged to $\nside=256$, the $\nside=512$ map has the same correlation with the GNILC dust map as the $\nside=256$ reference: 0.95 and 0.92 in the BICEP2 field, 0.89 and 0.82 in the ACTPol D56 field, with an rms of $u-{\rm GNILC}$ of 6.9 and 7.3\,$\mu$K in the BICEP2 field. The maps and spectra of this run are shown in Appendix~\ref{app:n512}.
 
 \section{Native implementation and cost}\label{sec:native}
 
@@ -365,6 +365,38 @@ Every run, figure and table of this paper can be rebuilt from public data on any
   \item \texttt{scripts/reproduce.sh figures}: all figures and tables.
 \end{enumerate}
 Each run writes its arguments, loss history and evaluations to \texttt{train.json}. The GPU runs are not bit-reproducible (atomic sums); a rerun differs within the spread between trainings of Sect.~\ref{sec:results}. A five-minute smoke test (Sect.~4 of the recipe) checks the installation before the long runs; the environment, the engine and the smoke test of the recipe were replayed in a fresh directory on the T4 test machine.
+\section{The reference at $\nside=512$}\label{app:n512}
+
+Figures~\ref{fig:n512_bicep} to \ref{fig:n512_spectra} repeat Figs.~\ref{fig:real_bicep}, \ref{fig:real_actpol}, \ref{fig:real_maps} and \ref{fig:real_spectra} for the reference trained at $\nside=512$ (Sect.~\ref{sec:n512}), with the same options, scales and contours. At this resolution the correlation of $u$ with the GNILC dust map, which is smoothed to about $60'$, is lower than at $\nside=256$ (0.88 and 0.82 in the BICEP2 field, 0.82 and 0.69 in the ACTPol D56 field), since $u$ keeps the small scales that GNILC removes; averaged to $\nside=256$, it is that of the $\nside=256$ reference.
+
+\begin{figure*}
+  \centering
+  \figfile{n512_bicep.pdf}{\textwidth}
+  \caption{As Fig.~\ref{fig:real_bicep}, for the reference trained at $\nside=512$.}
+  \label{fig:n512_bicep}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{n512_actpol.pdf}{0.8\textwidth}
+  \caption{As Fig.~\ref{fig:real_actpol}, for the reference trained at $\nside=512$.}
+  \label{fig:n512_actpol}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{n512_maps.pdf}{\textwidth}
+  \caption{As Fig.~\ref{fig:real_maps}, for the reference trained at $\nside=512$.}
+  \label{fig:n512_maps}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{n512_spectra.pdf}{0.8\textwidth}
+  \caption{As Fig.~\ref{fig:real_spectra}, for the reference trained at $\nside=512$: the spectra of the PR3 maps, of the half-mission cross spectrum and of the FFP10 noise at $\nside=512$.}
+  \label{fig:n512_spectra}
+\end{figure*}
+
 \end{appendix}
 
 \end{document}

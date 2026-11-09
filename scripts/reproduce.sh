@@ -134,6 +134,12 @@ figures)
     $PY scripts/prepare_gnilc.py $E/COM_CompMap_IQU-thermaldust-gnilc-varres_2048_R3.00.fits $E
     $PY scripts/make_figures_real.py $RUNS/n256_ebqu_c16 $R/data/maps $RUNS/figs_ref --gnilc $E \
         --field-mask $E/bk14_mask_gal_n0512.fits
+    # the same at nside 512 (appendix), with GNILC at nside 512
+    $PY scripts/prepare_gnilc.py $E/COM_CompMap_IQU-thermaldust-gnilc-varres_2048_R3.00.fits $E --nside 512
+    $PY scripts/make_figures_real.py $RUNS/n512_ebqu_c16 ${HIRES:-$R/data/maps_hi} $RUNS/figs_n512 --nside 512 \
+        --gnilc $E --field-mask $E/bk14_mask_gal_n0512.fits
+    # the known-sky validation
+    $PY scripts/make_figures_sim.py $R/sim_d12 $RUNS/sim_d12_ebqu $RUNS/figs_sim_d12 --apply "$RUNS/sim_d12_ebqu/apply/u_mc*.npz"
     # figures of the earlier runs (history of the tests)
     $PY scripts/make_figures.py $RUNS $RUNS/figs64
     $PY scripts/make_figures256.py $RUNS $RUNS/figs256
