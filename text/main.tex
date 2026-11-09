@@ -36,7 +36,7 @@
 {Scattering-transform statistics can separate a non-Gaussian sky component from noise without any clean training data: in \citet{delouis2022} the denoised \textit{Planck} dust map is the solution of an optimisation, run pixel by pixel with L-BFGS, that makes the statistics of the denoised map plus noise match those of the observed map.}
 {We replace this per-map optimisation by a network: a U-Net on the HEALPix sphere maps an observed map $d$ to a denoised map $u$ in one evaluation, and is trained with the same statistical constraint, so that no clean sky is ever used.}
 {The convolutions of the network are those of the scattering statistics: the STL/FOSCAT stencil, defined in the tangent plane of every pixel, with no base-face edges; its pooling is the NESTED pyramid. One network maps $(Q,U)$ to $(Q,U)$. The loss is that of \citet{delouis2022}, with frozen noise biases, computed on the E and B maps of $u$ under galactic masks, plus a half-mission cross-spectrum term, and the network is conditioned on the 857\,GHz map and on the noise level. The network, the scattering covariances, their exact gradient and the optimiser all run in the Rust engine of STL-Dev-MPI on one GPU. We denoise the \textit{Planck} PR3 353\,GHz $Q$ and $U$ maps at $\nside=256$ and compare with the per-map L-BFGS minimisation of the same loss.}
-{Over $|b|>30^\circ$, the EE and BB spectra of the denoised map follow the noise-free half-mission cross spectrum to 1\% up to $\ell=300$ and to 5\% for $300\le\ell<450$. Over $|b|>20^\circ$ the removed part has 0.89--0.90 times the rms of the noise, and at large scales it stays below the noise spectrum. The per-map L-BFGS solution of the same loss gives the same spectra but removes less noise on $U$. A training takes 2.5\,h on one A100, three times less than with a PyTorch network calling the same engine. Two trainings with the same loss end on maps that differ by a large fraction of the noise. On a known PySM dust sky with the PR3 noise, the spectra of the truth are recovered to 3\% over $|b|>30^\circ$ up to $\ell=300$ and the pixel error is 0.37 times the noise at $|b|>60^\circ$, the same on nine noise realisations not seen in training; where the noise dominates, the denoised map has the statistics of the sky but is only partly correlated with it. We list the alternatives tested on the way and why they were not kept.}
+{On a known PySM dust sky with the PR3 noise, the spectra of the truth are recovered to 3\% over $|b|>30^\circ$ up to $\ell=300$ and the pixel error is 0.37 times the noise at $|b|>60^\circ$, the same on nine noise realisations not seen in training; where the noise dominates, the denoised map has the statistics of the sky but is only partly correlated with it. On the PR3 maps, over $|b|>30^\circ$, the EE and BB spectra of the denoised map follow the noise-free half-mission cross spectrum to 1\% up to $\ell=300$ and to 5\% for $300\le\ell<450$. Over $|b|>20^\circ$ the removed part has 0.89--0.90 times the rms of the noise, and at large scales it stays below the noise spectrum. The per-map L-BFGS solution of the same loss gives the same spectra but removes less noise on $U$. A training takes 2.5\,h on one A100, three times less than with a PyTorch network calling the same engine. Two trainings with the same loss end on maps that differ by a large fraction of the noise. We list the alternatives tested on the way and why they were not kept.}
 {An amortised scattering denoiser is a cheap replacement for the per-map optimisation. Its errors are set by the loss, and should be quoted from several trainings.}
 
 \keywords{Methods: data analysis -- Methods: statistical -- ISM: dust, extinction -- Techniques: image processing}
@@ -49,7 +49,7 @@ Statistics built from the wavelet scattering transform \citep{mallat2012,bruna20
 
 Here we \emph{amortise} this optimisation: a network $f_\theta$ maps $d$ to $u=f_\theta(d)$, and its weights $\theta$, not the pixels of $u$, are trained with the same loss. Once trained, denoising a map costs one evaluation of the network. We use a U-Net \citep{ronneberger2015} laid on the HEALPix sphere \citep{gorski2005}, in line with the spherical, orientation-aware networks we developed for global ocean fields, and the scattering covariances of the STL-Dev-MPI library \citep{stldev}, whose Rust implementation provides the statistics and their exact gradient on the GPU.
 
-We describe the method (Sect.~\ref{sec:method}) and one reference training on the PR3 353\,GHz maps at $\nside=256$ (Sects.~\ref{sec:data} and \ref{sec:results}), compared with the per-map minimisation of the same loss. Section~\ref{sec:native} gives the implementation and its cost. The reference setting is the result of a series of tests, on mock data and on the PR3 maps; Sect.~\ref{sec:history} lists them and the choices they led to.
+We describe the method (Sect.~\ref{sec:method}) and one reference training at $\nside=256$ (Sect.~\ref{sec:data}), first validated on a known simulated sky with the PR3 noise (Sect.~\ref{sec:sim}) and then applied to the PR3 353\,GHz maps (Sect.~\ref{sec:results}), compared with the per-map minimisation of the same loss. Section~\ref{sec:native} gives the implementation and its cost. The reference setting is the result of a series of tests, on mock data and on the PR3 maps; Sect.~\ref{sec:history} lists them and the choices they led to.
 
 \section{Method}\label{sec:method}
 
@@ -135,7 +135,56 @@ The observations are the \textit{Planck} PR3 353\,GHz full-mission polarisation 
 
 The reference training minimises $\mathcal{L}=\mathcal{L}_{\rm data}+L_1+L_2+L_3+L_{\rm cl}$ on the E and B maps of the output (Sect.~\ref{sec:eb}), with the scattering coefficients averaged under the four galactic masks, the biases live for 200 steps and then frozen, and the conditioning on $\log I_{857}$ and on the noise level. It runs 3000 Adam steps with a cosine learning-rate schedule from $10^{-3}$, every step training $Q$ and $U$ together, in the native implementation of Sect.~\ref{sec:native}: 3.6\,s per step and 3\,h\,02\,min on one NVIDIA A100. Section~\ref{sec:history} gives the alternatives to each of these choices.
 
-\section{Results}\label{sec:results}
+\section{Validation on a known sky}\label{sec:sim}
+
+Before the PR3 maps, whose true sky is unknown, we test the method where the errors of $u$ can be measured: we build a mock observation with a known sky $s$ and the PR3 noise. The sky is the PySM~3 \citep{zonca2021} dust model \texttt{d12} \citep{mkd2018}, a three-dimensional model with several layers along the line of sight, evaluated at 353 and 857\,GHz at $\nside=2048$, smoothed by the 353\,GHz beam ($4.94'$) and averaged to $\nside=256$. Its EE and BB spectra are 0.41 and 0.43 times the PR3 half-mission cross spectrum over $|b|>30^\circ$ and $30\le\ell<450$; we multiply its E and B harmonic coefficients by a power law in $\ell$ fitted to the square root of that ratio (a gain of 1.66 and 1.64 at $\ell=100$, slopes $+0.08$ and $+0.07$), after which the spectra of $s$ follow the cross spectrum to 5\% (EE) and 14\% (BB) per band. The observation is $d=s+n_0$, with the full-mission FFP10 simulation 0 and its two half missions for $d_1$ and $d_2$, and the 857\,GHz map of the same model as the conditioning template. The network is trained on this $d$ as the reference (same options and code, 3000 steps, 2\,h\,27 on an A100), with the noise simulations 10--49; simulation 0 is not among them. It is then applied, without retraining, to $s+n_k$ for the nine other simulations $k=1$--9, also unseen.
+
+\begin{figure*}
+  \centering
+  \figfile{sim_maps.pdf}{\textwidth}
+  \caption{Validation on a known sky, full sky, $\nside=256$; top $Q$, bottom $U$. From left to right: the truth $s$ (PySM \texttt{d12} with the PR3 spectra), the observation $d=s+n$ with the FFP10 noise simulation 0, the denoised map $u$ (the three with the histogram-equalised colours of $s$), the error $u-s$ and the noise $d-s$, both on the linear scale of the noise.}
+  \label{fig:sim_maps}
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \figfile{sim_spectra.pdf}{0.8\textwidth}
+  \caption{Validation on a known sky: EE (left) and BB (right) spectra over $|b|>30^\circ$ (top) and $|b|>60^\circ$ (bottom), apodised by $5^\circ$: the truth $s$, the observation $d$, the denoised map $u$, the error $u-s$, the noise $n=d-s$, and the mean spectrum of the error when the same network is applied to $s+n_k$ for the nine noise simulations $k=1$--9 not used in training (dotted).}
+  \label{fig:sim_spectra}
+\end{figure*}
+
+\begin{table*}
+  \caption{Denoising of a known sky (PySM \texttt{d12} with PR3 spectra plus FFP10 noise), mean over the nine noise simulations not used in training (the scatter between them is at most 0.06, and 0.26 at $\ell<30$ for the residual). $C(u)/C(s)$: spectrum of the output over that of the truth; $r$: correlation coefficient $C(u,s)/\sqrt{C(u)C(s)}$; $C(u-s)/C(n)$: spectrum of the error over that of the noise (1 for $d$).}
+  \label{tab:sim}
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{llccccccc}
+    \hline
+    & & \multicolumn{7}{c}{$\ell$} \\
+    mask & quantity & 10--30 & 30--60 & 60--100 & 100--200 & 200--300 & 300--450 & 450--600 \\
+    \hline
+    $|b|>30^\circ$, EE & $C(u)/C(s)$ & 1.01 & 1.00 & 1.02 & 1.01 & 1.02 & 0.99 & 1.05 \\
+     & $r$ & 1.00 & 0.98 & 0.93 & 0.82 & 0.67 & 0.50 & 0.39 \\
+     & $C(u-s)/C(n)$ & 1.95 & 1.44 & 1.11 & 0.88 & 0.54 & 0.30 & 0.15 \\
+    $|b|>30^\circ$, BB & $C(u)/C(s)$ & 1.00 & 1.00 & 0.99 & 1.01 & 0.97 & 0.89 & 1.08 \\
+     & $r$ & 0.99 & 0.97 & 0.92 & 0.77 & 0.61 & 0.42 & 0.29 \\
+     & $C(u-s)/C(n)$ & 1.97 & 1.45 & 1.11 & 0.73 & 0.39 & 0.19 & 0.10 \\
+    $|b|>60^\circ$, EE & $C(u)/C(s)$ & 0.93 & 0.99 & 0.97 & 0.93 & 1.27 & 1.14 & 1.17 \\
+     & $r$ & 0.97 & 0.79 & 0.49 & 0.37 & 0.24 & 0.15 & 0.09 \\
+     & $C(u-s)/C(n)$ & 1.71 & 1.09 & 0.83 & 0.59 & 0.27 & 0.11 & 0.04 \\
+    $|b|>60^\circ$, BB & $C(u)/C(s)$ & 0.95 & 1.26 & 1.06 & 0.94 & 1.00 & 0.82 & 1.73 \\
+     & $r$ & 0.97 & 0.77 & 0.46 & 0.23 & 0.09 & 0.05 & 0.02 \\
+     & $C(u-s)/C(n)$ & 1.74 & 1.20 & 0.81 & 0.47 & 0.16 & 0.05 & 0.03 \\
+    \hline
+  \end{tabular}
+\end{table*}
+
+\paragraph{Pixel errors.} The rms of $u-s$ over that of the noise is 0.99, 0.73, 0.58, 0.42 and 0.37 in the latitude bands $|b|<20^\circ$, $20$--$30^\circ$, $30$--$45^\circ$, $45$--$60^\circ$ and $|b|>60^\circ$, for the training observation as for the nine unseen noise simulations (scatter between them at most 0.004): the network does not fit the noise realisation it was trained on, and the error is reduced by a factor 2.7 at high latitude. In the Galactic plane, where the noise is much smaller than the dust, the error stays at the noise level, and its map (Fig.~\ref{fig:sim_maps}) shows a thin band of negative $u-s$ along the plane, in $Q$ and in $U$: there the network removes a small part of the bright dust signal with the noise. Away from the plane the error has no visible large-scale structure, and its spectrum is the same for the nine unseen noise simulations (Fig.~\ref{fig:sim_spectra}).
+
+\paragraph{Spectra.} Over $|b|>30^\circ$ (Fig.~\ref{fig:sim_spectra}) the spectra of $u$ are those of the truth to 2\% (EE) and 3\% (BB) up to $\ell=300$, and within 11\% up to $\ell=600$ (Table~\ref{tab:sim}), while the noise is up to 30 times the signal at $\ell=500$. The output is not the truth at small scales, however: its correlation with $s$ falls from 0.98 at $\ell=30$--60 to 0.5 (EE) and 0.4 (BB) at $\ell=300$--450. The loss constrains the statistics of $u$, not $u$ itself: where the noise dominates, the network fills the map with structures of the right spectrum and scattering statistics, partly uncorrelated with the true ones. The error spectrum is nevertheless below the noise for $\ell\ge100$ (EE) and $\ell\ge60$ (BB), down to 0.15 and 0.10 of it at $\ell=450$--600. For $\ell<60$ it is 1.4--2 times the noise spectrum, but there the noise is two orders of magnitude below the dust and the correlation with the truth is 0.98--1.00. Over $|b|>60^\circ$ the dust is fainter and the same trends are stronger: the correlation with the truth is below 0.5 from $\ell=60$, BB is 26\% too high at $\ell=30$--60 and 73\% too high at $\ell=450$--600, the same sign as the BB excess at small scales on the PR3 maps (Sect.~\ref{sec:results}), which this test therefore attributes to the method and not to the data.
+
+\section{Results on the PR3 maps}\label{sec:results}
 
 \begin{figure*}
   \centering
@@ -201,41 +250,6 @@ The reference training minimises $\mathcal{L}=\mathcal{L}_{\rm data}+L_1+L_2+L_3
 \paragraph{The spread between trainings.} Two trainings with the same loss do not end on the same map. The native and PyTorch networks, which compute the same loss and gradient to $10^{-7}$ step by step, trained with the same options (frozen biases, without $L_{\rm cl}$), give maps that differ by 0.67 ($Q$) and 0.53 ($U$) times the noise rms, and removed parts with a correlation coefficient of only 0.70 and 0.76. The difference comes from the training itself: other noise draws, the order of floating-point operations, and a loss that does not determine $u$ uniquely. With $L_{\rm cl}$ and the terms on the E and B maps, a second seed changes the ratios of Table~\ref{tab:real} by at most 0.02 over $|b|>30^\circ$ and 0.03 over $|b|>60^\circ$ (PyTorch, 1000 steps). The reference itself was trained twice, with the spectrum term computed through Python and inside the engine: the two agree to $3\times10^{-15}$ on the value and $10^{-7}$ on the gradient, and the trajectories part after a few steps. The second training removes 0.80 ($Q$) and 0.78 ($U$) times the noise rms (0.32 in $P$), its ratios over $|b|>30^\circ$ differ from those of Table~\ref{tab:real} by at most 0.02, and over $|b|>60^\circ$ by at most 0.05. Only the largest scales move more: the EE spectrum of $d-u$ is 1.14 times the noise for $10\le\ell<30$, against 0.86, a range with few modes. Differences of a few per cent between single runs are within this spread. Several trainings per configuration are needed to quote errors, and their mean is itself a better estimate of $u$.
 
 \paragraph{Resolution $\nside=512$.}\label{sec:n512} The reference trained at $\nside=512$ (PR3 maps and FFP10 simulations at $\nside=512$, one more level of the U-Net, the same options otherwise) removes 0.86 ($Q$) and 0.85 ($U$) times the noise rms, against 0.81 and 0.75 at $\nside=256$: the extra pixels carry mostly noise. Over $|b|>30^\circ$ its EE and BB spectra follow the cross spectrum as at $\nside=256$, to 3\% up to $\ell=300$ and 0.94/0.96 for $300\le\ell<450$ (Table~\ref{tab:real}). Over $|b|>60^\circ$ they are lower for $200\le\ell<450$ (0.86/0.73 and 0.84), and the BB excess for $300\le\ell<450$ is 1.13 instead of 1.56. At large scales the removed part is closer to the noise (0.95 of its EE spectrum for $30\le\ell<60$, against 0.71). Averaged to $\nside=256$, the $\nside=512$ map has the same correlation with the GNILC dust map as the $\nside=256$ reference: 0.95 and 0.92 in the BICEP2 field, 0.89 and 0.82 in the ACTPol D56 field, with an rms of $u-{\rm GNILC}$ of 6.9 and 7.3\,$\mu$K in the BICEP2 field.
-
-\section{Validation on a known sky}\label{sec:sim}
-
-On the PR3 maps the true sky is unknown, so the errors of $u$ can only be inferred from the spectra and from the noise simulations. To measure them, we build a mock observation with a known sky $s$ and the PR3 noise. The sky is the PySM~3 \citep{zonca2021} dust model \texttt{d12} \citep{mkd2018}, a three-dimensional model with several layers along the line of sight, evaluated at 353 and 857\,GHz at $\nside=2048$, smoothed by the 353\,GHz beam ($4.94'$) and averaged to $\nside=256$. Its EE and BB spectra are 0.41 and 0.43 times the PR3 half-mission cross spectrum over $|b|>30^\circ$ and $30\le\ell<450$; we multiply its E and B harmonic coefficients by a power law in $\ell$ fitted to the square root of that ratio (a gain of 1.66 and 1.64 at $\ell=100$, slopes $+0.08$ and $+0.07$), after which the spectra of $s$ follow the cross spectrum to 5\% (EE) and 14\% (BB) per band. The observation is $d=s+n_0$, with the full-mission FFP10 simulation 0 and its two half missions for $d_1$ and $d_2$, and the 857\,GHz map of the same model as the conditioning template. The network is trained on this $d$ as the reference (same options and code, 3000 steps, 2\,h\,27 on an A100), with the noise simulations 10--49; simulation 0 is not among them. It is then applied, without retraining, to $s+n_k$ for the nine other simulations $k=1$--9, also unseen.
-
-\begin{table*}
-  \caption{Denoising of a known sky (PySM \texttt{d12} with PR3 spectra plus FFP10 noise), mean over the nine noise simulations not used in training (the scatter between them is at most 0.06, and 0.26 at $\ell<30$ for the residual). $C(u)/C(s)$: spectrum of the output over that of the truth; $r$: correlation coefficient $C(u,s)/\sqrt{C(u)C(s)}$; $C(u-s)/C(n)$: spectrum of the error over that of the noise (1 for $d$).}
-  \label{tab:sim}
-  \centering
-  \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  \begin{tabular}{llccccccc}
-    \hline
-    & & \multicolumn{7}{c}{$\ell$} \\
-    mask & quantity & 10--30 & 30--60 & 60--100 & 100--200 & 200--300 & 300--450 & 450--600 \\
-    \hline
-    $|b|>30^\circ$, EE & $C(u)/C(s)$ & 1.01 & 1.00 & 1.02 & 1.01 & 1.02 & 0.99 & 1.05 \\
-     & $r$ & 1.00 & 0.98 & 0.93 & 0.82 & 0.67 & 0.50 & 0.39 \\
-     & $C(u-s)/C(n)$ & 1.95 & 1.44 & 1.11 & 0.88 & 0.54 & 0.30 & 0.15 \\
-    $|b|>30^\circ$, BB & $C(u)/C(s)$ & 1.00 & 1.00 & 0.99 & 1.01 & 0.97 & 0.89 & 1.08 \\
-     & $r$ & 0.99 & 0.97 & 0.92 & 0.77 & 0.61 & 0.42 & 0.29 \\
-     & $C(u-s)/C(n)$ & 1.97 & 1.45 & 1.11 & 0.73 & 0.39 & 0.19 & 0.10 \\
-    $|b|>60^\circ$, EE & $C(u)/C(s)$ & 0.93 & 0.99 & 0.97 & 0.93 & 1.27 & 1.14 & 1.17 \\
-     & $r$ & 0.97 & 0.79 & 0.49 & 0.37 & 0.24 & 0.15 & 0.09 \\
-     & $C(u-s)/C(n)$ & 1.71 & 1.09 & 0.83 & 0.59 & 0.27 & 0.11 & 0.04 \\
-    $|b|>60^\circ$, BB & $C(u)/C(s)$ & 0.95 & 1.26 & 1.06 & 0.94 & 1.00 & 0.82 & 1.73 \\
-     & $r$ & 0.97 & 0.77 & 0.46 & 0.23 & 0.09 & 0.05 & 0.02 \\
-     & $C(u-s)/C(n)$ & 1.74 & 1.20 & 0.81 & 0.47 & 0.16 & 0.05 & 0.03 \\
-    \hline
-  \end{tabular}
-\end{table*}
-
-\paragraph{Pixel errors.} The rms of $u-s$ over that of the noise is 0.99, 0.73, 0.58, 0.42 and 0.37 in the latitude bands $|b|<20^\circ$, $20$--$30^\circ$, $30$--$45^\circ$, $45$--$60^\circ$ and $|b|>60^\circ$, for the training observation as for the nine unseen noise simulations (scatter between them at most 0.004): the network does not fit the noise realisation it was trained on, and the error is reduced by a factor 2.7 at high latitude. In the Galactic plane, where the noise is much smaller than the dust, the error stays at the noise level, as the removed part $d-u$ of the PR3 maps suggested (Sect.~\ref{sec:results}).
-
-\paragraph{Spectra.} Over $|b|>30^\circ$ the spectra of $u$ are those of the truth to 2\% (EE) and 3\% (BB) up to $\ell=300$, and within 11\% up to $\ell=600$ (Table~\ref{tab:sim}), while the noise is up to 30 times the signal at $\ell=500$. The output is not the truth at small scales, however: its correlation with $s$ falls from 0.98 at $\ell=30$--60 to 0.5 (EE) and 0.4 (BB) at $\ell=300$--450. The loss constrains the statistics of $u$, not $u$ itself: where the noise dominates, the network fills the map with structures of the right spectrum and scattering statistics, partly uncorrelated with the true ones. The error spectrum is nevertheless below the noise for $\ell\ge100$ (EE) and $\ell\ge60$ (BB), down to 0.15 and 0.10 of it at $\ell=450$--600. For $\ell<60$ it is 1.4--2 times the noise spectrum, but there the noise is two orders of magnitude below the dust and the correlation with the truth is 0.98--1.00. Over $|b|>60^\circ$ the dust is fainter and the same trends are stronger: the correlation with the truth is below 0.5 from $\ell=60$, BB is 26\% too high at $\ell=30$--60 and 73\% too high at $\ell=450$--600, the same sign as the BB excess at small scales on the PR3 maps, which this test therefore attributes to the method and not to the data.
 
 \section{Native implementation and cost}\label{sec:native}
 
