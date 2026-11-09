@@ -268,7 +268,7 @@ and after the correction `C(s)/C(d1xd2)` between 0.86 and 1.10 in every band.
 | `n256_ebqu_c16` | `stl_ebqu` | 3 h 02 | < 40 GB | 48 GB | Q 0.81, U 0.75 |
 | `n256_ebqu_c16cl` | `stl_cl` | 2 h 25 | < 40 GB | 48 GB | Q 0.80, U 0.78 |
 | `n512_ebqu_c16` | `stl_mem` | 7 h 49 | 48.4 GB | 64 GB | `Q err/noise 0.860 U err/noise 0.846` |
-| `n1024_ebqu_c16` | `stl_mem` | not yet measured | about 50 GB (estimate) | 160 GB | |
+| `n1024_ebqu_c16` (spectrum term up to l = 3071, `--cl-lmax 3071`) | `stl_mem` | not yet measured | about 50 GB (estimate) | 160 GB | |
 
 The value is the rms of d - u over that of the noise. A rerun differs within the spread between trainings
 (about 0.02), since the GPU sums are not bit-reproducible.
