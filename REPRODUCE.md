@@ -227,12 +227,13 @@ STL-Dev-MPI (driver `train_native_unet.py`, `scripts/train_native.slurm`), at th
 | `stl_ebqu` | `596e3e9c7ef4c9af5007266dde8442f3e58e7fa8` | `n256_ebqu_c16`, the reference at nside 256 with the spectrum term up to l = 2 nside - 1 |
 | `stl_cl` | `9be7aa0a7e03bae80cdba6db841c4e0c47a1d694` | `n256_ebqu_c16cl` (spectrum term in the trainer), `sim_d12_ebqu` (known sky) |
 | `stl_mem` | `9d0a00fc8f476f70f64b6324d99cb0c334ef93a4` | `n256_ebqu_c16_cl3n`, the reference at nside 256 (spectrum term up to l = 3 nside - 1), `sim_d12_ebqu_cl3n` (known sky, same options), `n512_ebqu_c16`, `n1024_ebqu_c16` (memory plan, host noise pools, `--mem-trace`) |
+| `stl_guard` | `76d76eb5f7d1c4c238c91157d981485272a40bf9` | `n512_ebqu_c16_cl3n_g`, the reference at nside 512 (spectrum term up to l = 3 nside - 1, `--spike-guard 3`; same engine as `stl_mem`, the trainer with the spike guard) |
 
 ### 7.1 Engines
 
 ```bash
 for b in stl_ebqu:596e3e9c7ef4c9af5007266dde8442f3e58e7fa8 stl_cl:9be7aa0a7e03bae80cdba6db841c4e0c47a1d694 \
-         stl_mem:9d0a00fc8f476f70f64b6324d99cb0c334ef93a4; do
+         stl_mem:9d0a00fc8f476f70f64b6324d99cb0c334ef93a4 stl_guard:76d76eb5f7d1c4c238c91157d981485272a40bf9; do
     git clone https://github.com/jmdelouis/STL-Dev-MPI $R/${b%%:*}/src
     git -C $R/${b%%:*}/src checkout ${b##*:}
     STL=${b%%:*} sbatch $CPU_OPTS -o $RUNS/slurm.%j.log scripts/build_bridge.slurm
@@ -269,6 +270,7 @@ and after the correction `C(s)/C(d1xd2)` between 0.86 and 1.10 in every band.
 | `n256_ebqu_c16_cl3n` (`--cl-lmax 767`) | `stl_mem` | 2 h 11 | < 40 GB | 48 GB | `Q err/noise 0.866 U err/noise 0.789` |
 | `n256_ebqu_c16` | `stl_ebqu` | 3 h 02 | < 40 GB | 48 GB | Q 0.81, U 0.75 |
 | `n256_ebqu_c16cl` | `stl_cl` | 2 h 25 | < 40 GB | 48 GB | Q 0.80, U 0.78 |
+| `n512_ebqu_c16_cl3n_g` (`--cl-lmax 1535 --spike-guard 3`) | `stl_guard` | 7 h 54 | 48.4 GB | 64 GB | `Q err/noise 0.976 U err/noise 0.888`; the log shows `spike guard` at steps 247, 249, 1044 and 1046 (the steps may differ on a rerun) |
 | `n512_ebqu_c16` | `stl_mem` | 7 h 49 | 48.4 GB | 64 GB | `Q err/noise 0.860 U err/noise 0.846` |
 | `n1024_ebqu_c16` (spectrum term up to l = 3071, `--cl-lmax 3071`) | `stl_mem` | not yet measured | about 50 GB (estimate) | 160 GB | |
 

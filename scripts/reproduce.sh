@@ -131,6 +131,14 @@ runs)
         --cl-masks 0,30,45,60 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
         --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu \
         --channels 16,32,48,64,64,64,64 --noise-pools host --mem-trace --data ${HIRES:-$R/data/maps_hi}
+    # the reference at nside 512: the spectrum term up to l = 3 nside - 1, with the spike guard of the trainer
+    # of commit 76d76eb (same engine as 9d0a00f); without the guard, an Adam loss spike at step 1200 is not recovered
+    STL=stl_guard sbatch -p gpu --gres=gpu:a100:1 -c 6 --mem=64G -t 36:00:00 -J n512_ebqu_c16_cl3n_g -o $RUNS/slurm.%j.log \
+        scripts/train_native.slurm n512_ebqu_c16_cl3n_g \
+        --nside 512 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
+        --cl-masks 0,30,45,60 --cl-lmax 1535 --cond log857+sigma --bias-warmup 200 --bias-realizations 40 --bias-every 50 --sims 10-49 \
+        --eval-every 500 --log-every 50 --engine-cache-bytes 0 --seed 0 --input-scale map --pol ebqu \
+        --channels 16,32,48,64,64,64,64 --noise-pools host --mem-trace --spike-guard 3 --data ${HIRES:-$R/data/maps_hi}
     STL=stl_mem sbatch -p gpu --gres=gpu:a100:1 -c 6 --mem=160G -t 96:00:00 -J n1024_ebqu_c16 -o $RUNS/slurm.%j.log \
         scripts/train_native.slurm n1024_ebqu_c16 \
         --nside 1024 --optimizer adam --steps 3000 --lr 1e-3 --loss data=1,l1=1,l2=1,l3=1,cl=1 --stat-masks 0,20,30,45 \
@@ -195,7 +203,7 @@ figures)
         --field-mask $E/bk14_mask_gal_n0512.fits
     # the same at nside 512 (appendix), with GNILC at nside 512
     $PY scripts/prepare_gnilc.py $E/COM_CompMap_IQU-thermaldust-gnilc-varres_2048_R3.00.fits $E --nside 512
-    $PY scripts/make_figures_real.py $RUNS/n512_ebqu_c16 ${HIRES:-$R/data/maps_hi} $RUNS/figs_n512 --nside 512 \
+    $PY scripts/make_figures_real.py $RUNS/n512_ebqu_c16_cl3n_g ${HIRES:-$R/data/maps_hi} $RUNS/figs_n512 --nside 512 \
         --gnilc $E --field-mask $E/bk14_mask_gal_n0512.fits
     # the known-sky validation
     $PY scripts/make_figures_sim.py $R/sim_d12 $RUNS/sim_d12_ebqu_cl3n $RUNS/figs_sim_d12 \
