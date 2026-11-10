@@ -38,6 +38,7 @@ stlia-train-patches --data maps --out runs/p256 --nside 256 --stl-backend gpu --
 | `docs/` | the documentation (Sphinx, MyST); API and command-line pages are generated from the code |
 | `text/` | the A&A paper, synchronised with Overleaf |
 | `REPRODUCE.md` | step-by-step recipe for every run, figure and table of the paper, on any GPU machine |
+| `HANDOFF.md` | state of the project: where the data and runs are, what is finished, open problems, failed attempts |
 
 Data and heavy computations live on an HPC work directory, not in this repository.
 

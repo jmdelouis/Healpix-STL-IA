@@ -272,7 +272,7 @@ and after the correction `C(s)/C(d1xd2)` between 0.86 and 1.10 in every band.
 | `n256_ebqu_c16cl` | `stl_cl` | 2 h 25 | < 40 GB | 48 GB | Q 0.80, U 0.78 |
 | `n512_ebqu_c16_cl3n_g` (`--cl-lmax 1535 --spike-guard 3`) | `stl_guard` | 7 h 54 | 48.4 GB | 64 GB | `Q err/noise 0.976 U err/noise 0.888`; the log shows `spike guard` at steps 247, 249, 1044 and 1046 (the steps may differ on a rerun) |
 | `n512_ebqu_c16` | `stl_mem` | 7 h 49 | 48.4 GB | 64 GB | `Q err/noise 0.860 U err/noise 0.846` |
-| `n1024_ebqu_c16` (spectrum term up to l = 3071, `--cl-lmax 3071`) | `stl_mem` | not yet measured | about 50 GB (estimate) | 160 GB | |
+| `n1024_ebqu_c16` (spectrum term up to l = 3071, `--cl-lmax 3071`) | `stl_mem` | never completed: 174 s for the first (live-bias) step, about 10 h for the 200 live steps | 50.5 GB at the first live step | 160 GB | not trained yet; add `--spike-guard 3` with `STL=stl_guard` (see the 512 run) |
 
 The value is the rms of d - u over that of the noise. A rerun differs within the spread between trainings
 (about 0.02), since the GPU sums are not bit-reproducible.
@@ -286,6 +286,7 @@ bash scripts/reproduce.sh apply     # on a GPU node, after sim_d12_ebqu and sim_
 **Check:** `$RUNS/sim_d12_ebqu_cl3n/eval_truth.txt` gives, for every `u_mc*.npz`, `u-s rms/noise by |b|` close to
 `0.976 0.679 0.547 0.387 0.323`, and, averaged over the nine `u_mc*.npz`, the EE and BB ratios of Table 2 of the
 paper (`0.985 0.726 0.581 0.421 0.369` for `sim_d12_ebqu`, the spectrum term up to l = 2 nside - 1).
+`python scripts/mean_truth.py $RUNS/sim_d12_ebqu_cl3n/eval_truth.txt` prints these means over mc1-9 (Table 2).
 
 ### 7.5 Figures
 
@@ -302,7 +303,13 @@ The spectra go up to l = 3 nside - 1. Copy into `text/figures/`:
 | `$RUNS/figs_n512/real_{bicep,actpol,maps,spectra}.pdf` | `n512_{bicep,actpol,maps,spectra}.pdf` |
 
 `make_figures_real.py` also prints, for each field, the correlation and rms of u and d against GNILC
-(BICEP2 field at nside 256: `corr(u, G) 0.946` in Q, `0.943` in U).
+(BICEP2 field at nside 256: `corr(u, G) 0.946` in Q, `0.943` in U); `--bcut 60` prints the band powers over |b| > 60 deg.
+
+The other numbers of the results on the PR3 maps (removed rms by latitude band, its E/B and P parts, (d - u)/n and u/(d1 x d2)
+by multipole bin over |b| > 30 and 60 deg, which give Table 3) come from
+`python scripts/text_numbers.py $RUNS/RUN DATA_DIR NSIDE` (DATA_DIR: `$R/data/maps`, or `$HIRES` at nside 512).
+For the nside 512 correlation with GNILC averaged to nside 256, average `eval_{Q,U}.npz` over the 4 NESTED children
+(`reshape(-1, 4).mean(1)`) into a directory and run `make_figures_real.py` on it at nside 256.
 
 ## Pitfalls met while making the paper
 
