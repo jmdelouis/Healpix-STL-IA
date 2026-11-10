@@ -3,7 +3,7 @@
 # $R/$STL/target/release/libstl_bridge.so (STL_NATIVE_LIBRARY of env.sh).
 #
 #   git clone https://github.com/jmdelouis/STL-Dev-MPI $R/$STL/src
-#   git -C $R/$STL/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
+#   git -C $R/$STL/src checkout 2026.11.01     (the production trainer; the paper runs: REPRODUCE.md)
 #   sbatch $CPU_OPTS -o $RUNS/slurm.%j.log scripts/build_bridge.slurm    (or: bash scripts/build_bridge.slurm)
 #
 # Needs cargo (Rust stable; built with 1.99.1) and CUDARC_CUDA_VERSION; no

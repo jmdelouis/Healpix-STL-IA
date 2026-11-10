@@ -1,9 +1,9 @@
 #!/bin/bash
-# One training of the native U-Net of STL-Dev-MPI (NativeUNet, commit
-# b580210, built in $R/$STL) on the PR3 maps, with its driver
+# One training of the native U-Net of STL-Dev-MPI (NativeUNet, tag
+# 2026.11.01 or the commits of REPRODUCE.md, built in $R/$STL) on the PR3 maps, with its driver
 # train_native_unet.py (the options of train_denoise.py --real):
 #
-#   STL=stl_nu sbatch $GPU_OPTS -o $RUNS/slurm.%j.log scripts/train_native.slurm RUN [driver options]
+#   STL=stl sbatch $GPU_OPTS -o $RUNS/slurm.%j.log scripts/train_native.slurm RUN [driver options]
 #
 # The run goes to $RUNS/RUN (log, model.pt, train.json, eval_*.npz), as train_gpu.slurm.
 : "${R:?source scripts/env.sh (or a site file) first}"

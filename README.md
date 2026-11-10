@@ -11,7 +11,12 @@ A U-Net on the sphere maps an observed map `d` to a denoised map `u = f_θ(d)`. 
 - **Full-sky or disc-patch training**, with the disc statistics on CPU or GPU.
 - **Mock data** (FFP10 noise draws) or **the Planck PR3 maps themselves** (`--real`).
 
-**Documentation: <https://jmdelouis.github.io/Healpix-STL-IA/>**: installation, method, user guide, command line, API.
+**Documentation: <https://jmdelouis.github.io/Healpix-STL-IA/>**:
+- tutorials, from a first run at nside 64 to the reference at 256 and nside 512/1024;
+- every option of the production trainer, with what changing it did in the paper;
+- method and API.
+
+The production trainer is `train_native_unet.py` of STL-Dev-MPI, tag `2026.11.01`.
 
 ## Install
 

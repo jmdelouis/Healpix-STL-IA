@@ -29,14 +29,16 @@ The spin-2 (E/B) transforms of {class}`stlia.sht.HEALPixSHT` build their tables 
 
 ## The STL-Dev-MPI engine
 
-The statistics, and their exact gradients, come from the `stl-bridge` library of [STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI). It is called from Python through `stl_port.native`.
+The statistics, and their exact gradients, come from the `stl-bridge` library of [STL-Dev-MPI](https://github.com/jmdelouis/STL-Dev-MPI). It is called from Python through `stl_port.native`, which also holds the production trainer `train_native_unet.py`. Use the tag **`2026.11.01`**: it has everything the tutorials and {doc}`options/native-trainer` describe.
 
 ```bash
 git clone https://github.com/jmdelouis/STL-Dev-MPI stl/src
-git -C stl/src checkout 20329e1d2aeb6b822e194f671367e9eed8eb8193
+git -C stl/src checkout 2026.11.01
 export CUDARC_CUDA_VERSION=12080      # CUDA version of the driver, from nvidia-smi (12.8 -> 12080)
 cd stl/src && cargo build --release -p stl-bridge --features gpu
 ```
+
+The runs of the paper used earlier commits of the same line, listed in {doc}`reproduce` (Sect. 7.1); `2026.11.01` gives the same losses and adds options. The notes below concern the PyTorch trainers of {doc}`user-guide/index` and older builds.
 
 The masked statistics (`--stat-masks`) need commit `9038114` (bridge 2026-11-05-v5) or later; the runs of the paper without masks used `66975a4` and `20329e1`, whose full-sky statistics are identical.
 

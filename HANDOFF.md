@@ -21,7 +21,8 @@ all run on one GPU, in the Rust engine of STL-Dev-MPI (`NativeUNet`, driver
 |---|---|
 | this repository | `github.com/jmdelouis/Healpix-STL-IA`, branch `main` |
 | the paper | `text/` here, also the Overleaf project kept in sync by `git subtree` (`CLAUDE.md`, rule "The paper") |
-| the engine and the native trainer | `github.com/jmdelouis/STL-Dev-MPI`; the commits used are listed in the paper's reproduction appendix and in `REPRODUCE.md` Sect. 7.1. The newest is `9386f94` (below). |
+| the engine and the native trainer | `github.com/jmdelouis/STL-Dev-MPI`, tag **`2026.11.01`** (commit `9386f94`): the production code. The commits of the paper runs are listed in the paper's reproduction appendix and in `REPRODUCE.md` Sect. 7.1. |
+| the documentation | `docs/` here, published at <https://jmdelouis.github.io/Healpix-STL-IA/>: tutorials, and every option of the production trainer and scripts with what changing it did (`docs/options/`) |
 | HPC (Datarmor, Ifremer) | `$HOME/stlia` = `R`: `src` (a copy of this repository), `data/planck` (downloads), `data/maps` (nside 256/128/64), `data/ext` (GNILC, BK14 mask), engine builds `stl_*`, older runs in `runs/` |
 | HPC, large files | `/work/jmdeloui/stlia`: `maps_hi` (nside 512 and 1024, 55 GB), `sky_d12`, `sim_d12` (known sky), `gnilc` (nside 512), and the runs of the paper's latest maps in `runs/` (`n256_ebqu_c16_cl3n`, `sim_d12_ebqu_cl3n`, `n512_ebqu_c16_cl3n_g`, ...) |
 | test GPU machine (garoupe, 3 T4) | `/tmp/jmdeloui-prof` and `/tmp/jmdeloui-stlia/data` (nside 64/128 data). `/tmp` is not kept: everything there is reproducible from the HPC data and the commits above. |

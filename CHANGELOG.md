@@ -10,6 +10,19 @@ Every change of the code or of its behaviour is recorded here, newest first, tog
 - **Checkpoints.** `stlia-train-denoise` writes `model.pt` to a temporary file and renames it. A failed write, such as a full file system, now leaves the previous checkpoint intact instead of a truncated file. No documentation change: the outputs are the same.
 
 ### Added
+- **Documentation for the production trainer.** The docs follow the layout of healpix-resample:
+  - **Tutorials** (`docs/tutorials/`): quickstart at nside 64, the reference at 256, the known-sky validation,
+    applying a trained network, nside 512 and 1024.
+  - **Options** (`docs/options/`):
+    - every option of `train_native_unet.py` (STL-Dev-MPI tag `2026.11.01`), with its default, the reference value
+      and the measurement of the paper that varied it;
+    - every script;
+    - the PyTorch commands (the former `cli.md`).
+  - **Results** (`docs/results.md`): the paper as the record of the experiments.
+
+  The PyTorch user guide is now the "PyTorch implementation" section. `rust_port.md`, a superseded plan, is removed.
+  `installation.md`, `build_bridge.slurm` and `train_native.slurm` point to the tag. Also updated: `README.md`,
+  `HANDOFF.md`.
 - **Hand-over.** `HANDOFF.md`: where the data, runs and engine commits are, what is finished, the open problems (nside 1024 not trained, u above the cross spectrum beyond l = 2 nside, BB excess, large-scale residual at 512, Adam spikes) and the attempts not kept (L-BFGS on the weights, coarse-to-fine start). `scripts/text_numbers.py` (removed rms by band, E/B and P parts, spectrum ratios by bin: the numbers of Table 3 and of the results paragraphs) and `scripts/mean_truth.py` (means of `eval_truth.py` over mc1-9: Table 2) added; `scripts/prepare_data_hires.slurm` (nside 512 and 1024 data), cited by the paper and `REPRODUCE.md`, is now in the repository. Documentation: `README.md`, `REPRODUCE.md` Sects. 7.3-7.5.
 - **nside 512 reference with the spectrum term up to 3 nside - 1.** Run `n512_ebqu_c16_cl3n_g` (STL-Dev-MPI 76d76eb, `STL=stl_guard`, `--cl-lmax 1535 --spike-guard 3`) in `reproduce.sh`; the nside 512 figures are built from it. Paper: Table 3 row, nside 512 paragraph (spike at step 1200 without the guard), cost, history list (also L-BFGS on the weights), appendix figures. `REPRODUCE.md`: commit table, build loop, run table.
 - **Recipe of the paper maps.** `scripts/download_ext.sh` downloads the GNILC map and the BK14 mask; `scripts/reproduce.sh` gains the steps `sky` (PySM d12 sky and mock observation) and `apply` (known-sky network on other noises, errors against the truth) and the run `sim_d12_ebqu`, and its joined command lines are split again. Documentation: `REPRODUCE.md` Sect. 7 (engine commits, data, trainings with time, memory and checks, figures) and its requirements; paper: the reproduction appendix rewritten as the recipe of these maps.

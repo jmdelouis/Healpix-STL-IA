@@ -1,6 +1,6 @@
 # Training on disc patches
 
-`stlia-train-patches` (or `python train_patches.py`) trains the network on random discs instead of whole maps. All options are listed in {doc}`../cli`; the principle is in {doc}`../method`.
+`stlia-train-patches` (or `python train_patches.py`) trains the network on random discs instead of whole maps. All options are listed in {doc}`../options/torch-cli`; the principle is in {doc}`../method`.
 
 ```bash
 # disc statistics on 32 CPU cores: about 3.3 s per step at nside 256

@@ -1,6 +1,6 @@
 # Full-sky training
 
-`stlia-train-denoise` (or `python train_denoise.py`) trains the spherical U-Net on whole maps. Both the network and the statistics run on one GPU. All options are listed in {doc}`../cli`.
+`stlia-train-denoise` (or `python train_denoise.py`) trains the spherical U-Net on whole maps. Both the network and the statistics run on one GPU. All options are listed in {doc}`../options/torch-cli`.
 
 ## Mock data
 
